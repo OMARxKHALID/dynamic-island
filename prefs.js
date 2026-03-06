@@ -18,17 +18,18 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
     const layoutGroup = new Adw.PreferencesGroup({
       title: "Layout",
-      description: "Control the island's position and what it shows",
+      description: "Customize the position and visibility of the notch",
     });
     appearancePage.add(layoutGroup);
 
     const posRow = new Adw.SpinRow({
       title: "Horizontal Offset",
-      subtitle: "Shift from center (px). Negative = left, positive = right",
+      subtitle: "Shift from center (px) for off-center camera setups",
+      icon_name: "go-next-symbolic",
       adjustment: new Gtk.Adjustment({
-        lower: -600,
-        upper: 600,
-        step_increment: 10,
+        lower: -1200,
+        upper: 1200,
+        step_increment: 5,
         page_increment: 50,
       }),
     });
@@ -42,7 +43,8 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
     const albumArtRow = new Adw.SwitchRow({
       title: "Show Album Art",
-      subtitle: "Display album artwork in the expanded view",
+      subtitle: "Display artwork in the expanded media view",
+      icon_name: "image-x-generic-symbolic",
     });
     settings.bind(
       "show-album-art",
@@ -54,7 +56,8 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
     const seekRow = new Adw.SwitchRow({
       title: "Show Seek Bar",
-      subtitle: "Display playback progress in the expanded view",
+      subtitle: "Display playback progress and time indicators",
+      icon_name: "media-seek-forward-symbolic",
     });
     settings.bind(
       "show-seek-bar",
@@ -65,11 +68,12 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     layoutGroup.add(seekRow);
 
     const scaleRow = new Adw.SpinRow({
-      title: "Notch Scale",
-      subtitle: "Overall size multiplier (e.g., 1.2 is 20% larger)",
+      title: "Interface Scale",
+      subtitle: "Adjust the overall size of the Dynamic Island",
+      icon_name: "zoom-in-symbolic",
       adjustment: new Gtk.Adjustment({
         lower: 0.5,
-        upper: 2.5,
+        upper: 3.0,
         step_increment: 0.05,
         page_increment: 0.1,
       }),
@@ -90,12 +94,16 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     window.add(behaviorPage);
 
-    const generalGroup = new Adw.PreferencesGroup({ title: "General" });
+    const generalGroup = new Adw.PreferencesGroup({
+      title: "General",
+      description: "Core extension logic and interactions",
+    });
     behaviorPage.add(generalGroup);
 
     const autoHideRow = new Adw.SwitchRow({
-      title: "Auto-hide",
-      subtitle: "Completely hide the island when no media player is running",
+      title: "Auto-hide Clock",
+      subtitle: "Only show the island when media or OSD is active",
+      icon_name: "eye-not-looking-symbolic",
     });
     settings.bind(
       "auto-hide",
@@ -106,9 +114,9 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     generalGroup.add(autoHideRow);
 
     const osdRow = new Adw.SwitchRow({
-      title: "Replace System Volume / Brightness OSD",
-      subtitle:
-        "Show volume and brightness inside the island instead of the default popup",
+      title: "Replace System OSD",
+      subtitle: "Render sound and brightness popups inside the notch",
+      icon_name: "audio-volume-high-symbolic",
     });
     settings.bind(
       "intercept-osd",
@@ -123,11 +131,12 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
     const animRow = new Adw.SpinRow({
       title: "Animation Duration",
-      subtitle: "Expand / collapse duration in milliseconds (100–800)",
+      subtitle: "Fluidity of expansion and collapse (ms)",
+      icon_name: "preferences-desktop-animation-symbolic",
       adjustment: new Gtk.Adjustment({
-        lower: 100,
-        upper: 800,
-        step_increment: 20,
+        lower: 50,
+        upper: 1000,
+        step_increment: 10,
         page_increment: 100,
       }),
     });

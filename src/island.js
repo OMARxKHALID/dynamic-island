@@ -27,6 +27,7 @@ import {
   WAVEFORM_BARS,
   WAVEFORM_H,
   HOVER_DEBOUNCE,
+  NOTCH_RADIUS,
 } from "./constants.js";
 
 const MPRIS_PLAYER_IFACE = "org.mpris.MediaPlayer2.Player";
@@ -57,9 +58,19 @@ export class DynamicIsland {
     this._addToStage();
     this._connectSettings();
     this._startClock();
+
+    // Respect auto-hide on startup
+    if (this._settings.get_boolean("auto-hide") && !this._mediaProxy) {
+      this._actor.hide();
+      this._actor.opacity = 0;
+    }
   }
 
   _refreshUI() {
+    const scale = this._settings.get_double("notch-scale") || 1.0;
+    const radius = Math.floor(NOTCH_RADIUS * scale);
+    this._actor.set_style(`border-radius: 0 0 ${radius}px ${radius}px;`);
+
     // 1. Remember state
     const currentState = this._state;
 
@@ -114,10 +125,12 @@ export class DynamicIsland {
       layout_manager: new Clutter.BinLayout(),
     });
     const scale = this._settings.get_double("notch-scale") || 1.0;
+    const radius = Math.floor(NOTCH_RADIUS * scale);
     this._actor.set_size(
       Math.floor(PILL_W * scale),
       Math.floor(PILL_H * scale),
     );
+    this._actor.set_style(`border-radius: 0 0 ${radius}px ${radius}px;`);
 
     this._pillView = this._buildPillView();
     this._compactView = this._buildCompactView();
@@ -194,19 +207,24 @@ export class DynamicIsland {
       style_class: "di-compact-art",
       width: Math.floor(ART_COMPACT * scale),
       height: Math.floor(ART_COMPACT * scale),
+      layout_manager: new Clutter.BinLayout(),
       y_align: Clutter.ActorAlign.CENTER,
     });
 
     this._compactArtActor = new Clutter.Actor({
       x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
+      x_expand: true,
+      y_expand: true,
     });
     this._compactFallbackIcon = new St.Icon({
       style_class: "di-compact-icon",
       icon_name: "audio-x-generic-symbolic",
-      icon_size: Math.floor(14 * scale),
+      icon_size: Math.floor(18 * scale),
       x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
+      x_expand: true,
+      y_expand: true,
     });
 
     this._compactArtContainer.add_child(this._compactArtActor);
@@ -222,13 +240,13 @@ export class DynamicIsland {
       vertical: false,
       y_expand: true,
       y_align: Clutter.ActorAlign.END,
-      style: "spacing: 2px;",
+      style: `spacing: ${Math.floor(2 * scale)}px;`,
     });
     this._waveformBars = [];
     for (let i = 0; i < WAVEFORM_BARS; i++) {
       const bar = new St.Widget({
         style_class: `di-waveform-bar di-bar-${i}`,
-        height: 2,
+        height: Math.floor(2 * scale),
         y_align: Clutter.ActorAlign.END,
       });
       this._waveformBars.push(bar);
@@ -290,25 +308,27 @@ export class DynamicIsland {
       vertical: true,
       x_expand: true,
       y_align: Clutter.ActorAlign.CENTER,
-      style: "spacing: 5px;",
+      style: `spacing: ${Math.floor(5 * scale)}px;`,
     });
 
     this._titleLabel = new St.Label({ style_class: "di-title", text: "" });
     this._titleLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
     this._titleLabel.visible = false;
+    this._titleLabel.style = `font-size: ${Math.floor(14 * scale)}px; font-weight: bold;`;
 
     this._artistLabel = new St.Label({ style_class: "di-artist", text: "" });
     this._artistLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
     this._artistLabel.visible = false;
+    this._artistLabel.style = `font-size: ${Math.floor(10 * scale)}px; color: rgba(255,255,255,0.7);`;
 
     this._seekBg = new St.Widget({
       style_class: "di-seek-bg",
-      height: 4,
+      height: Math.floor(4 * scale),
       x_expand: true,
     });
     this._seekFill = new St.Widget({
       style_class: "di-seek-fill",
-      height: 4,
+      height: Math.floor(4 * scale),
       width: 0,
     });
     this._seekBg.add_child(this._seekFill);
@@ -320,6 +340,8 @@ export class DynamicIsland {
     });
     this._posLabel = new St.Label({ style_class: "di-time", text: "0:00" });
     this._durLabel = new St.Label({ style_class: "di-time", text: "0:00" });
+    this._posLabel.style = `font-size: ${Math.floor(11 * scale)}px;`;
+    this._durLabel.style = `font-size: ${Math.floor(11 * scale)}px;`;
     this._timeRow.add_child(this._posLabel);
     this._timeRow.add_child(new St.Widget({ x_expand: true }));
     this._timeRow.add_child(this._durLabel);
@@ -365,26 +387,31 @@ export class DynamicIsland {
   }
 
   _buildOsdView() {
+    const scale = this._settings.get_double("notch-scale") || 1.0;
     const box = new St.BoxLayout({
       style_class: "di-osd-view",
       vertical: true,
       x_expand: true,
       y_expand: true,
       y_align: Clutter.ActorAlign.CENTER,
-      style: "spacing: 12px;",
+      style: `spacing: ${Math.floor(12 * scale)}px;`,
     });
     const topRow = new St.BoxLayout({
       vertical: false,
       x_expand: true,
-      style: "spacing: 8px;",
+      style: `spacing: ${Math.floor(8 * scale)}px;`,
     });
-    this._osdIcon = new St.Icon({ style_class: "di-osd-icon", icon_size: 18 });
+    this._osdIcon = new St.Icon({
+      style_class: "di-osd-icon",
+      icon_size: Math.floor(18 * scale),
+    });
     this._osdValueLabel = new St.Label({
       style_class: "di-osd-value",
       text: "",
       x_expand: true,
       x_align: Clutter.ActorAlign.END,
     });
+    this._osdValueLabel.style = `font-size: ${Math.floor(14 * scale)}px;`;
     topRow.add_child(this._osdIcon);
     topRow.add_child(this._osdValueLabel);
 
@@ -392,10 +419,9 @@ export class DynamicIsland {
       vertical: false,
       x_expand: true,
       y_align: Clutter.ActorAlign.CENTER,
-      style: "spacing: 3px;",
+      style: `spacing: ${Math.floor(3 * scale)}px;`,
     });
     this._osdSegs = [];
-    const scale = this._settings.get_double("notch-scale") || 1.0;
     for (let i = 0; i < OSD_SEG_COUNT; i++) {
       const seg = new St.Widget({
         style_class: "di-osd-seg",
@@ -479,6 +505,23 @@ export class DynamicIsland {
       if (artUrl && this._settings.get_boolean("show-album-art"))
         this._loadAlbumArt(artUrl);
       else this._clearAlbumArt();
+    });
+
+    watch("auto-hide", () => {
+      if (!this._mediaProxy && this._state !== State.OSD) {
+        if (this._settings.get_boolean("auto-hide")) {
+          this._actor.ease({
+            opacity: 0,
+            duration: 250,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            onComplete: () => this._actor.hide(),
+          });
+        } else {
+          this._actor.show();
+          this._actor.opacity = 255;
+          this._transitionTo(State.PILL);
+        }
+      }
     });
   }
 
@@ -943,7 +986,7 @@ export class DynamicIsland {
     targetW = Math.floor(targetW * scale);
     targetH = Math.floor(targetH * scale);
 
-    const dur = this._settings.get_int("animation-duration") || 340;
+    const dur = this._settings.get_int("animation-duration") || 280;
 
     [
       this._pillView,
