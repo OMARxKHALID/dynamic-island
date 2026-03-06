@@ -299,6 +299,9 @@ export class DynamicIsland {
     this._nextBtn = this._makeCtrlBtn("media-skip-forward-symbolic", () =>
       this._onNext(),
     );
+    this._playPauseBtn.reactive = true;
+    this._nextBtn.reactive = true;
+    this._prevBtn.reactive = true;
     controls.add_child(this._prevBtn);
     controls.add_child(this._playPauseBtn);
     controls.add_child(this._nextBtn);
@@ -383,9 +386,13 @@ export class DynamicIsland {
         style_class: "di-ctrl-icon",
         icon_name: iconName,
         icon_size: Math.floor(18 * scale),
+        reactive: false,
       }),
     );
-    btn.connect("clicked", onClicked);
+    btn.connect("button-press-event", () => {
+      onClicked();
+      return Clutter.EVENT_STOP;
+    });
     return btn;
   }
 
@@ -535,30 +542,39 @@ export class DynamicIsland {
     const status =
       this._mediaProxy.get_cached_property("PlaybackStatus")?.unpack() ??
       "Stopped";
-    try {
-      if (status === "Stopped") this._mediaProxy.PlayRemote();
-      else this._mediaProxy.PlayPauseRemote();
-    } catch (e) {
-      console.error("DynamicIsland: PlayPause failed:", e.message);
-    }
+    const method = status === "Stopped" ? "Play" : "PlayPause";
+    this._mediaProxy.call(
+      method,
+      new GLib.Variant("()", []),
+      Gio.DBusCallFlags.NONE,
+      -1,
+      null,
+      null,
+    );
   }
 
   _onPrevious() {
     if (!this._mediaProxy) return;
-    try {
-      this._mediaProxy.PreviousRemote();
-    } catch (e) {
-      console.error("DynamicIsland: Previous failed:", e.message);
-    }
+    this._mediaProxy.call(
+      "Previous",
+      new GLib.Variant("()", []),
+      Gio.DBusCallFlags.NONE,
+      -1,
+      null,
+      null,
+    );
   }
 
   _onNext() {
     if (!this._mediaProxy) return;
-    try {
-      this._mediaProxy.NextRemote();
-    } catch (e) {
-      console.error("DynamicIsland: Next failed:", e.message);
-    }
+    this._mediaProxy.call(
+      "Next",
+      new GLib.Variant("()", []),
+      Gio.DBusCallFlags.NONE,
+      -1,
+      null,
+      null,
+    );
   }
 
   _startClock() {
@@ -773,6 +789,7 @@ export class DynamicIsland {
   }
 
   showOsd(iconName, level, maxLevel) {
+    const scale = this._settings.get_double("notch-scale") || 1.0;
     const pct = Math.round((level / (maxLevel || 1)) * 100);
     const isVolume = iconName.startsWith("audio-volume");
     const isBrightness = iconName.includes("brightness");
@@ -824,17 +841,18 @@ export class DynamicIsland {
     if (this._state !== State.OSD) {
       this._transitionTo(State.OSD, () => {
         if (isBrightness && this._pendingBrightnessFill !== undefined) {
+          // Explicitly ensure the fill is visible by using a calculated width if real width is 0
+          const bgW = this._osdSmoothBg.get_width() || (OSD_W - 40) * scale;
           this._osdSmoothFill.set_width(
-            Math.floor(
-              this._osdSmoothBg.get_width() * this._pendingBrightnessFill,
-            ),
+            Math.floor(bgW * this._pendingBrightnessFill),
           );
           this._pendingBrightnessFill = undefined;
         }
       });
     } else if (isBrightness) {
+      const bgW = this._osdSmoothBg.get_width() || (OSD_W - 40) * scale;
       this._osdSmoothFill.set_width(
-        Math.floor(this._osdSmoothBg.get_width() * (level / (maxLevel || 1))),
+        Math.floor(bgW * (level / (maxLevel || 1))),
       );
     }
   }

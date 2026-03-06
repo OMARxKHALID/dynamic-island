@@ -37,7 +37,6 @@
 
 .di-compact-view {
   padding: 0 14px;
-  spacing: 10px;
 }
 
 .di-compact-art {
@@ -168,7 +167,7 @@
 }
 
 .di-osd-seg.active {
-  background-color: rgba(255, 255, 255, 0.95);
+  background-color: #ffffff;
 }
 
 .di-osd-seg.active.over-amplified {

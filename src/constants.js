@@ -11,13 +11,13 @@ export const COMPACT_W = 180;
 export const COMPACT_H = 34;
 export const EXPANDED_W = 450;
 export const EXPANDED_H = 150;
-export const OSD_W = 330;
-export const OSD_H = 114;
+export const OSD_W = 325;
+export const OSD_H = 110;
 
 // Component specific
 export const ART_COMPACT = 26;
 export const ART_EXPANDED = 110;
-export const WAVEFORM_BARS = 14;
+export const WAVEFORM_BARS = 8;
 export const WAVEFORM_H = 26;
 export const OSD_SEG_COUNT = 28;
 
