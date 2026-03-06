@@ -59,6 +59,52 @@ export class DynamicIsland {
     this._startClock();
   }
 
+  _refreshUI() {
+    // 1. Remember state
+    const currentState = this._state;
+
+    // 2. Clear children
+    this._actor.destroy_all_children();
+
+    // 3. Rebuild and add back
+    this._pillView = this._buildPillView();
+    this._compactView = this._buildCompactView();
+    this._expandedView = this._buildExpandedView();
+    this._osdView = this._buildOsdView();
+
+    [
+      this._pillView,
+      this._compactView,
+      this._expandedView,
+      this._osdView,
+    ].forEach((v) => this._actor.add_child(v));
+
+    // 4. Restore visibility/sync state
+    this._pillView.hide();
+    this._compactView.hide();
+    this._expandedView.hide();
+    this._osdView.hide();
+
+    if (currentState === State.PILL) this._pillView.show();
+    else if (currentState === State.COMPACT) this._compactView.show();
+    else if (currentState === State.EXPANDED) this._expandedView.show();
+    else if (currentState === State.OSD) this._osdView.show();
+
+    // 5. Trigger resize animation to new scale
+    this._transitionTo(currentState);
+
+    // 6. Reload artwork if needed
+    if (this._mediaProxy) {
+      const meta =
+        this._mediaProxy.get_cached_property("Metadata")?.deepUnpack() ?? {};
+      const artUrl = meta["mpris:artUrl"]?.unpack() ?? "";
+      if (artUrl && this._settings.get_boolean("show-album-art")) {
+        this._loadAlbumArt(artUrl);
+      }
+      this.updateMedia(this._mediaProxy);
+    }
+  }
+
   _buildWidget() {
     this._actor = new St.Widget({
       style_class: "dynamic-island",
@@ -418,7 +464,7 @@ export class DynamicIsland {
       this._settingsIds.push(this._settings.connect(`changed::${key}`, fn));
 
     watch("position-offset", () => this._repositionForSize(this._actor.width));
-    watch("notch-scale", () => this._transitionTo(this._state));
+    watch("notch-scale", () => this._refreshUI());
     watch("show-seek-bar", () => {
       const show = this._settings.get_boolean("show-seek-bar");
       this._seekBg.visible = show;
@@ -475,8 +521,14 @@ export class DynamicIsland {
           : "media-playback-start-symbolic",
       );
 
-    this._prevBtn.reactive = true;
-    this._nextBtn.reactive = true;
+    const canGoPrev =
+      proxy.get_cached_property("CanGoPrevious")?.unpack() ?? true;
+    const canGoNext = proxy.get_cached_property("CanGoNext")?.unpack() ?? true;
+
+    this._prevBtn.reactive = canGoPrev;
+    this._prevBtn.opacity = canGoPrev ? 255 : 80;
+    this._nextBtn.reactive = canGoNext;
+    this._nextBtn.opacity = canGoNext ? 255 : 80;
 
     if (artUrl && this._settings.get_boolean("show-album-art"))
       this._loadAlbumArt(artUrl);
@@ -523,6 +575,10 @@ export class DynamicIsland {
     this._seekFill.set_width(0);
     this._posLabel.set_text("0:00");
     this._durLabel.set_text("0:00");
+    this._prevBtn.reactive = true;
+    this._nextBtn.reactive = true;
+    this._prevBtn.opacity = 255;
+    this._nextBtn.opacity = 255;
 
     if (this._settings.get_boolean("auto-hide")) {
       this._actor?.ease({
