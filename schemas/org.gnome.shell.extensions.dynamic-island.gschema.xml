@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.dynamic-island"
+          path="/org/gnome/shell/extensions/dynamic-island/">
+
+    <key name="position-offset" type="i">
+      <default>0</default>
+      <summary>Horizontal offset from screen center in pixels</summary>
+      <description>Shift the island left (negative) or right (positive) from center.</description>
+    </key>
+
+    <key name="show-album-art" type="b">
+      <default>true</default>
+      <summary>Show album art in expanded view</summary>
+      <description>Display album artwork when the island is expanded on hover.</description>
+    </key>
+
+    <key name="show-seek-bar" type="b">
+      <default>true</default>
+      <summary>Show seek bar in expanded view</summary>
+      <description>Display playback progress bar in the expanded view.</description>
+    </key>
+
+    <key name="auto-hide" type="b">
+      <default>false</default>
+      <summary>Auto-hide when no media is active</summary>
+      <description>Fully hide the island pill when no MPRIS player is running.</description>
+    </key>
+
+    <key name="intercept-osd" type="b">
+      <default>true</default>
+      <summary>Replace system volume/brightness OSD</summary>
+      <description>Show volume and brightness changes inside the island instead of the default GNOME OSD popup.</description>
+    </key>
+
+    <key name="animation-duration" type="i">
+      <default>280</default>
+      <summary>Animation duration in milliseconds</summary>
+      <description>Duration for island expand and collapse animations.</description>
+    </key>
+
+    <key name="notch-scale" type="d">
+      <default>1.0</default>
+      <summary>Notch Scale</summary>
+      <description>Overall scale multiplier for the island (0.8 to 1.5 recommended).</description>
+    </key>
+
+  </schema>
+</schemalist>

@@ -1,0 +1,8 @@
+{
+  "uuid": "dynamic-island@omarxkhalid.github.io",
+  "name": "Dynamic Island",
+  "description": "A Dynamic Island for GNOME Shell. Floating media player with animated album art, playback controls, seek bar, and volume/brightness OSD — inspired by Dynamic Island and NotchNook for macOS.\n\nFeatures:\n* Floating pill at top-center of screen\n* MPRIS media player integration (Spotify, Firefox, VLC, Rhythmbox, etc.)\n* Compact view with waveform animation when playing\n* Expanded view with album art, seek bar and controls on hover\n* Volume and brightness OSD replaces default system popup\n* Smooth Expo animations throughout\n* Configurable via preferences",
+  "shell-version": ["46", "47", "48"],
+  "settings-schema": "org.gnome.shell.extensions.dynamic-island",
+  "url": "https://github.com/omarxkhalid/dynamic-island"
+}

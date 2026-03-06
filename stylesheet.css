@@ -1,0 +1,186 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Dynamic Island — stylesheet.css
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Root container ─────────────────────────────────────────────────────── */
+
+.dynamic-island {
+  background-color: #000000;
+  border-radius: 0 0 22px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: none;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.65),
+    0 2px 8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PILL VIEW
+   ════════════════════════════════════════════════════════════════════════ */
+
+.di-pill-view {
+  padding: 0 16px;
+}
+
+.di-clock-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  letter-spacing: 0.5px;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COMPACT VIEW
+   ════════════════════════════════════════════════════════════════════════ */
+
+.di-compact-view {
+  padding: 0 14px;
+  spacing: 10px;
+}
+
+.di-compact-art {
+  border-radius: 6px;
+  background-color: transparent;
+}
+
+.di-compact-icon {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── CAVA-style waveform ─────────────────────────────────────────────────
+
+   Each bar is solid white. The .di-waveform-fade overlay sits on top and
+   fades the tops of all bars into the black island background, producing
+   the characteristic CAVA "emerging from darkness" look.
+   ─────────────────────────────────────────────────────────────────────── */
+
+.di-waveform-bar {
+  width: 3px;
+  border-radius: 2px 2px 1px 1px;
+  background-color: rgba(255, 255, 255, 0.88);
+}
+
+.di-waveform-fade {
+  background-gradient-direction: vertical;
+  background-gradient-start: #000000;
+  background-gradient-end: rgba(0, 0, 0, 0);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   EXPANDED VIEW
+   ════════════════════════════════════════════════════════════════════════ */
+
+.di-expanded-view {
+  padding: 18px 20px;
+}
+
+.di-album-art {
+  border-radius: 14px;
+  background-color: transparent;
+  min-width: 110px;
+  min-height: 110px;
+}
+
+.di-album-fallback {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.di-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.3px;
+}
+
+.di-artist {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.di-seek-bg {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+
+.di-seek-fill {
+  background-color: #ffffff;
+  border-radius: 9999px;
+}
+
+.di-time-row {
+  margin-top: 2px;
+}
+
+.di-time {
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.38);
+  font-feature-settings: "tnum" 1;
+}
+
+/* ── Playback controls — horizontal row ──────────────────────────────── */
+
+.di-controls {
+  margin-top: 2px;
+}
+
+.di-ctrl-btn {
+  background-color: transparent;
+  border: none;
+  padding: 8px;
+  border-radius: 50%;
+}
+
+.di-ctrl-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.di-ctrl-icon {
+  color: #ffffff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   OSD VIEW
+   ════════════════════════════════════════════════════════════════════════ */
+
+.di-osd-view {
+  padding: 14px 20px 18px;
+}
+
+.di-osd-icon {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.di-osd-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.di-osd-seg {
+  width: 7px;
+  height: 24px;
+  background-color: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+
+.di-osd-seg.active {
+  background-color: rgba(255, 255, 255, 0.95);
+}
+
+.di-osd-seg.active.over-amplified {
+  background-color: #ff3b30;
+}
+
+.di-osd-smooth-bg {
+  background-color: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+}
+
+.di-osd-smooth-fill {
+  background-color: #ffffff;
+  border-radius: 9999px;
+}
