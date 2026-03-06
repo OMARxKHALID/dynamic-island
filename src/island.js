@@ -7,33 +7,29 @@ import GdkPixbuf from "gi://GdkPixbuf";
 import Cogl from "gi://Cogl";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
-const PILL_W = 160;
-const PILL_H = 34;
-const COMPACT_W = 145;
-const COMPACT_H = 40;
-const EXPANDED_W = 460;
-const EXPANDED_H = 155;
-const OSD_W = 330;
-const OSD_H = 114;
-const ART_COMPACT = 26;
-const ART_EXPANDED = 110;
-
-const OSD_SEG_COUNT = 28;
-const OSD_HIDE_MS = 2500;
-const WAVEFORM_MS = 135;
-const WAVEFORM_BARS = 7;
-const WAVEFORM_H = 26;
-const SEEK_TICK_S = 1;
-const HOVER_DEBOUNCE = 350;
+import {
+  PILL_W,
+  PILL_H,
+  COMPACT_W,
+  COMPACT_H,
+  EXPANDED_W,
+  EXPANDED_H,
+  OSD_W,
+  OSD_H,
+  OSD_SEG_COUNT,
+  OSD_HIDE_MS,
+  WAVEFORM_MS,
+  SEEK_TICK_S,
+  CLOCK_TICK_MS,
+  State,
+  ART_COMPACT,
+  ART_EXPANDED,
+  WAVEFORM_BARS,
+  WAVEFORM_H,
+  HOVER_DEBOUNCE,
+} from "./constants.js";
 
 const MPRIS_PLAYER_IFACE = "org.mpris.MediaPlayer2.Player";
-
-const State = Object.freeze({
-  PILL: "pill",
-  COMPACT: "compact",
-  EXPANDED: "expanded",
-  OSD: "osd",
-});
 
 export class DynamicIsland {
   constructor(settings) {
@@ -63,8 +59,6 @@ export class DynamicIsland {
     this._startClock();
   }
 
-  // ── Widget construction ──────────────────────────────────────────────────
-
   _buildWidget() {
     this._actor = new St.Widget({
       style_class: "dynamic-island",
@@ -73,7 +67,11 @@ export class DynamicIsland {
       clip_to_allocation: true,
       layout_manager: new Clutter.BinLayout(),
     });
-    this._actor.set_size(PILL_W, PILL_H);
+    const scale = this._settings.get_double("notch-scale") || 1.0;
+    this._actor.set_size(
+      Math.floor(PILL_W * scale),
+      Math.floor(PILL_H * scale),
+    );
 
     this._pillView = this._buildPillView();
     this._compactView = this._buildCompactView();
@@ -92,10 +90,6 @@ export class DynamicIsland {
     this._expandedView.hide();
     this._osdView.hide();
 
-    // Debounce collapse: notify::hover briefly fires false when the pointer
-    // moves onto a reactive child (button) even though it is still inside the
-    // island boundary. The timeout absorbs that transient false-leave before
-    // deciding to actually collapse.
     this._hoverId = this._actor.connect("notify::hover", () => {
       if (this._state === State.OSD) return;
 
@@ -112,7 +106,8 @@ export class DynamicIsland {
           HOVER_DEBOUNCE,
           () => {
             this._collapseTimeoutId = null;
-            if (!this._actor?.hover) this._onHoverLeave();
+            if (!this._actor || this._actor.hover) return GLib.SOURCE_REMOVE;
+            this._onHoverLeave();
             return GLib.SOURCE_REMOVE;
           },
         );
@@ -132,6 +127,8 @@ export class DynamicIsland {
       style_class: "di-clock-label",
       text: "--:--",
     });
+    const scale = this._settings.get_double("notch-scale") || 1.0;
+    this._clockLabel.set_style(`font-size: ${Math.floor(13 * scale)}px;`);
     this._clockLabel.clutter_text.ellipsize = 0;
     box.add_child(this._clockLabel);
     return box;
@@ -146,12 +143,14 @@ export class DynamicIsland {
       y_align: Clutter.ActorAlign.CENTER,
     });
 
+    const scale = this._settings.get_double("notch-scale") || 1.0;
     this._compactArtContainer = new St.Widget({
       style_class: "di-compact-art",
-      width: ART_COMPACT,
-      height: ART_COMPACT,
+      width: Math.floor(ART_COMPACT * scale),
+      height: Math.floor(ART_COMPACT * scale),
       y_align: Clutter.ActorAlign.CENTER,
     });
+
     this._compactArtActor = new Clutter.Actor({
       x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
@@ -159,16 +158,17 @@ export class DynamicIsland {
     this._compactFallbackIcon = new St.Icon({
       style_class: "di-compact-icon",
       icon_name: "audio-x-generic-symbolic",
-      icon_size: 14,
+      icon_size: Math.floor(14 * scale),
       x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
     });
+
     this._compactArtContainer.add_child(this._compactArtActor);
     this._compactArtContainer.add_child(this._compactFallbackIcon);
 
     const waveformOuter = new St.Widget({
       layout_manager: new Clutter.BinLayout(),
-      height: WAVEFORM_H,
+      height: Math.floor(WAVEFORM_H * scale),
       clip_to_allocation: true,
       y_align: Clutter.ActorAlign.CENTER,
     });
@@ -181,7 +181,7 @@ export class DynamicIsland {
     this._waveformBars = [];
     for (let i = 0; i < WAVEFORM_BARS; i++) {
       const bar = new St.Widget({
-        style_class: "di-waveform-bar",
+        style_class: `di-waveform-bar di-bar-${i}`,
         height: 2,
         y_align: Clutter.ActorAlign.END,
       });
@@ -205,23 +205,24 @@ export class DynamicIsland {
   }
 
   _buildExpandedView() {
+    const scale = this._settings.get_double("notch-scale") || 1.0;
     const box = new St.BoxLayout({
       style_class: "di-expanded-view",
       vertical: false,
       x_expand: true,
       y_expand: true,
-      style: "spacing: 18px;",
+      style: `spacing: ${Math.floor(18 * scale)}px;`,
     });
 
-    // Container clips to square. Actor is sized to actual pixbuf dimensions
-    // after load so aspect ratio is preserved without stretching.
     this._albumArtBox = new St.Widget({
       style_class: "di-album-art",
-      width: ART_EXPANDED,
-      height: ART_EXPANDED,
+      width: Math.floor(ART_EXPANDED * scale),
+      height: Math.floor(ART_EXPANDED * scale),
       clip_to_allocation: true,
+      layout_manager: new Clutter.BinLayout(),
       y_align: Clutter.ActorAlign.CENTER,
     });
+
     this._albumArtActor = new Clutter.Actor({
       x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
@@ -229,12 +230,13 @@ export class DynamicIsland {
     this._albumFallbackIcon = new St.Icon({
       style_class: "di-album-fallback",
       icon_name: "audio-x-generic-symbolic",
-      icon_size: 44,
+      icon_size: Math.floor(52 * scale),
       x_expand: true,
       y_expand: true,
       x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
     });
+
     this._albumArtBox.add_child(this._albumArtActor);
     this._albumArtBox.add_child(this._albumFallbackIcon);
 
@@ -245,7 +247,6 @@ export class DynamicIsland {
       style: "spacing: 5px;",
     });
 
-    // Hidden by default; shown only when non-empty.
     this._titleLabel = new St.Label({ style_class: "di-title", text: "" });
     this._titleLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
     this._titleLabel.visible = false;
@@ -301,6 +302,7 @@ export class DynamicIsland {
     controls.add_child(this._prevBtn);
     controls.add_child(this._playPauseBtn);
     controls.add_child(this._nextBtn);
+    controls.set_style(`spacing: ${Math.floor(6 * scale)}px;`);
 
     rightCol.add_child(this._titleLabel);
     rightCol.add_child(this._artistLabel);
@@ -344,20 +346,25 @@ export class DynamicIsland {
       style: "spacing: 3px;",
     });
     this._osdSegs = [];
+    const scale = this._settings.get_double("notch-scale") || 1.0;
     for (let i = 0; i < OSD_SEG_COUNT; i++) {
-      const seg = new St.Widget({ style_class: "di-osd-seg" });
+      const seg = new St.Widget({
+        style_class: "di-osd-seg",
+        width: Math.floor(7 * scale),
+        height: Math.floor(24 * scale),
+      });
       this._osdSegs.push(seg);
       this._osdSegBox.add_child(seg);
     }
 
     this._osdSmoothBg = new St.Widget({
       style_class: "di-osd-smooth-bg",
-      height: 6,
+      height: Math.floor(6 * scale),
       x_expand: true,
     });
     this._osdSmoothFill = new St.Widget({
       style_class: "di-osd-smooth-fill",
-      height: 6,
+      height: Math.floor(6 * scale),
       width: 0,
     });
     this._osdSmoothBg.add_child(this._osdSmoothFill);
@@ -370,23 +377,30 @@ export class DynamicIsland {
 
   _makeCtrlBtn(iconName, onClicked) {
     const btn = new St.Button({ style_class: "di-ctrl-btn", reactive: true });
+    const scale = this._settings.get_double("notch-scale") || 1.0;
     btn.set_child(
       new St.Icon({
         style_class: "di-ctrl-icon",
         icon_name: iconName,
-        icon_size: 18,
+        icon_size: Math.floor(18 * scale),
       }),
     );
     btn.connect("clicked", onClicked);
     return btn;
   }
 
-  // ── Stage & settings ─────────────────────────────────────────────────────
-
   _addToStage() {
-    Main.uiGroup.add_child(this._actor);
-    Main.uiGroup.set_child_above_sibling(this._actor, null);
-    this._repositionForSize(PILL_W);
+    Main.layoutManager.addChrome(this._actor, {
+      affectsStruts: false,
+      trackFullscreen: true,
+    });
+    const scale = this._settings.get_double("notch-scale") || 1.0;
+    this._actor.set_size(
+      Math.floor(PILL_W * scale),
+      Math.floor(PILL_H * scale),
+    );
+    this._repositionForSize(this._actor.width);
+
     this._monitorsId = Main.layoutManager.connect("monitors-changed", () =>
       this._repositionForSize(this._actor.width),
     );
@@ -397,11 +411,13 @@ export class DynamicIsland {
       this._settingsIds.push(this._settings.connect(`changed::${key}`, fn));
 
     watch("position-offset", () => this._repositionForSize(this._actor.width));
+    watch("notch-scale", () => this._transitionTo(this._state));
     watch("show-seek-bar", () => {
       const show = this._settings.get_boolean("show-seek-bar");
       this._seekBg.visible = show;
       this._timeRow.visible = show;
     });
+
     watch("show-album-art", () => {
       if (!this._mediaProxy) return;
       const meta =
@@ -423,11 +439,8 @@ export class DynamicIsland {
     );
   }
 
-  // ── Media API ────────────────────────────────────────────────────────────
-
   updateMedia(proxy) {
     this._mediaProxy = proxy;
-
     const meta = proxy.get_cached_property("Metadata")?.deepUnpack() ?? {};
     const status =
       proxy.get_cached_property("PlaybackStatus")?.unpack() ?? "Stopped";
@@ -457,8 +470,6 @@ export class DynamicIsland {
 
     this._prevBtn.reactive = true;
     this._nextBtn.reactive = true;
-    this._prevBtn.opacity = 255;
-    this._nextBtn.opacity = 255;
 
     if (artUrl && this._settings.get_boolean("show-album-art"))
       this._loadAlbumArt(artUrl);
@@ -502,6 +513,9 @@ export class DynamicIsland {
     this._titleLabel.visible = false;
     this._artistLabel.set_text("");
     this._artistLabel.visible = false;
+    this._seekFill.set_width(0);
+    this._posLabel.set_text("0:00");
+    this._durLabel.set_text("0:00");
 
     if (this._settings.get_boolean("auto-hide")) {
       this._actor?.ease({
@@ -516,11 +530,6 @@ export class DynamicIsland {
     }
   }
 
-  // ── Player actions ───────────────────────────────────────────────────────
-
-  // Use the auto-generated *Remote() bindings produced by Gio.DBusProxy when
-  // g-interface-info is set. These are the same methods GNOME Shell itself uses
-  // in js/ui/mpris.js and are more reliable than proxy.call() with string names.
   _onPlayPause() {
     if (!this._mediaProxy) return;
     const status =
@@ -552,8 +561,6 @@ export class DynamicIsland {
     }
   }
 
-  // ── Clock ────────────────────────────────────────────────────────────────
-
   _startClock() {
     this._stopClock();
     const tick = () => {
@@ -584,8 +591,6 @@ export class DynamicIsland {
     }
   }
 
-  // ── Album art ────────────────────────────────────────────────────────────
-
   _loadAlbumArt(artUrl) {
     if (this._artIdleId) {
       GLib.Source.remove(this._artIdleId);
@@ -599,22 +604,24 @@ export class DynamicIsland {
           this._clearAlbumArt();
           return GLib.SOURCE_REMOVE;
         }
+        const scale = this._settings.get_double("notch-scale") || 1.0;
         const [path] = GLib.filename_from_uri(artUrl);
+        const bigSize = Math.floor(ART_EXPANDED * scale);
+        const smallSize = Math.floor(ART_COMPACT * scale);
+
         const big = GdkPixbuf.Pixbuf.new_from_file_at_scale(
           path,
-          ART_EXPANDED,
-          ART_EXPANDED,
+          bigSize,
+          bigSize,
           true,
         );
         const small = GdkPixbuf.Pixbuf.new_from_file_at_scale(
           path,
-          ART_COMPACT,
-          ART_COMPACT,
+          smallSize,
+          smallSize,
           true,
         );
 
-        // Size actor to real pixbuf dimensions so clip_to_allocation
-        // centers it without distorting the aspect ratio.
         this._albumArtActor.set_size(big.get_width(), big.get_height());
         this._albumArtActor.set_content(this._pixbufToImage(big));
         this._albumFallbackIcon.hide();
@@ -657,8 +664,6 @@ export class DynamicIsland {
     return image;
   }
 
-  // ── Seek tracking ────────────────────────────────────────────────────────
-
   _startSeekTracking() {
     this._stopSeekTracking();
     this._seekSrc = GLib.timeout_add_seconds(
@@ -680,9 +685,6 @@ export class DynamicIsland {
 
   _tickSeek() {
     if (!this._mediaProxy || this._state !== State.EXPANDED) return;
-
-    // MPRIS Position is NOT sent via PropertiesChanged — the proxy cache is
-    // always stale. Fetch it directly with an explicit Properties.Get call.
     const owner = this._mediaProxy.g_name_owner;
     const path = this._mediaProxy.g_object_path;
     if (!owner) return;
@@ -703,12 +705,25 @@ export class DynamicIsland {
           const [posVar] = reply.deepUnpack();
           const pos = Number(posVar.unpack());
           if (this._trackLength > 0 && this._seekBg) {
-            const progress = Math.min(pos / this._trackLength, 1);
-            this._seekFill.set_width(Math.floor(this._seekBg.width * progress));
+            const progress = Math.max(0, Math.min(pos / this._trackLength, 1));
+            this._seekFill.set_width(
+              Math.floor(this._seekBg.get_width() * progress),
+            );
             this._posLabel.set_text(this._µsToTime(pos));
             this._durLabel.set_text(this._µsToTime(this._trackLength));
+          } else {
+            this._seekFill.set_width(0);
+            this._posLabel.set_text("0:00");
+            this._durLabel.set_text(
+              this._trackLength > 0
+                ? this._µsToTime(this._trackLength)
+                : "0:00",
+            );
           }
-        } catch (_) {}
+        } catch (_) {
+          this._seekFill.set_width(0);
+          this._posLabel.set_text("0:00");
+        }
       },
     );
   }
@@ -717,8 +732,6 @@ export class DynamicIsland {
     const s = Math.floor(µs / 1_000_000);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   }
-
-  // ── Waveform ─────────────────────────────────────────────────────────────
 
   _startWaveform() {
     this._stopWaveform();
@@ -757,24 +770,16 @@ export class DynamicIsland {
       GLib.Source.remove(this._waveformSrc);
       this._waveformSrc = null;
     }
-    this._waveformBars?.forEach((bar) =>
-      bar.ease({
-        height: 2,
-        duration: 200,
-        mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
-      }),
-    );
   }
-
-  // ── OSD API ──────────────────────────────────────────────────────────────
 
   showOsd(iconName, level, maxLevel) {
     const pct = Math.round((level / (maxLevel || 1)) * 100);
     const isVolume = iconName.startsWith("audio-volume");
-    const isBright = iconName.includes("brightness");
-    const base = iconName.replace(/-symbolic$/, "");
+    const isBrightness = iconName.includes("brightness");
 
-    this._osdIcon.set_icon_name(`${base}-symbolic`);
+    this._osdIcon.set_icon_name(
+      `${iconName}-symbolic`.replace("-symbolic-symbolic", "-symbolic"),
+    );
     this._osdValueLabel.set_text(`${pct}%`);
 
     if (isVolume) {
@@ -782,144 +787,133 @@ export class DynamicIsland {
       this._osdSmoothBg.hide();
       const filled = Math.round((pct / 100) * OSD_SEG_COUNT);
       this._osdSegs.forEach((seg, i) => {
-        const on = i < filled;
-        if (on) seg.add_style_class_name("active");
-        else seg.remove_style_class_name("active");
-        if (on && pct > 100) seg.add_style_class_name("over-amplified");
-        else seg.remove_style_class_name("over-amplified");
+        if (i < filled) {
+          seg.add_style_class_name("active");
+          if (pct > 100) seg.add_style_class_name("over-amplified");
+          else seg.remove_style_class_name("over-amplified");
+        } else {
+          seg.remove_style_class_name("active");
+          seg.remove_style_class_name("over-amplified");
+        }
       });
-    } else if (isBright) {
+    } else if (isBrightness) {
       this._osdSegBox.hide();
       this._osdSmoothBg.show();
       this._pendingBrightnessFill = level / (maxLevel || 1);
     }
 
-    if (this._osdHideSrc) {
-      GLib.Source.remove(this._osdHideSrc);
-      this._osdHideSrc = null;
-    }
-    this._transitionTo(State.OSD);
-
+    if (this._osdHideSrc) GLib.Source.remove(this._osdHideSrc);
     this._osdHideSrc = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT,
       OSD_HIDE_MS,
       () => {
         this._osdHideSrc = null;
-        this._transitionTo(this._mediaProxy ? State.COMPACT : State.PILL);
+        if (this._playing) this._transitionTo(State.COMPACT);
+        else if (this._settings.get_boolean("auto-hide")) {
+          this._actor.ease({
+            opacity: 0,
+            duration: 250,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            onComplete: () => this._actor.hide(),
+          });
+        } else this._transitionTo(State.PILL);
         return GLib.SOURCE_REMOVE;
       },
     );
-  }
 
-  // ── Transitions ──────────────────────────────────────────────────────────
+    if (this._state !== State.OSD) {
+      this._transitionTo(State.OSD, () => {
+        if (isBrightness && this._pendingBrightnessFill !== undefined) {
+          this._osdSmoothFill.set_width(
+            Math.floor(
+              this._osdSmoothBg.get_width() * this._pendingBrightnessFill,
+            ),
+          );
+          this._pendingBrightnessFill = undefined;
+        }
+      });
+    } else if (isBrightness) {
+      this._osdSmoothFill.set_width(
+        Math.floor(this._osdSmoothBg.get_width() * (level / (maxLevel || 1))),
+      );
+    }
+  }
 
   _onHoverEnter() {
     if (this._mediaProxy) this._transitionTo(State.EXPANDED);
   }
 
   _onHoverLeave() {
-    if (this._state === State.EXPANDED)
-      this._transitionTo(this._mediaProxy ? State.COMPACT : State.PILL);
+    if (this._mediaProxy) this._transitionTo(State.COMPACT);
   }
 
-  _transitionTo(newState) {
-    if (this._state === newState && newState !== State.OSD) return;
+  _transitionTo(state, onComplete) {
+    this._state = state;
+    if (!this._actor) return;
+    const scale = this._settings.get_double("notch-scale") || 1.0;
 
-    newState === State.PILL ? this._startClock() : this._stopClock();
-    this._state = newState;
+    let targetW = PILL_W;
+    let targetH = PILL_H;
 
-    const dur = this._settings.get_int("animation-duration");
+    if (state === State.COMPACT) {
+      targetW = COMPACT_W;
+      targetH = COMPACT_H;
+    } else if (state === State.EXPANDED) {
+      targetW = EXPANDED_W;
+      targetH = EXPANDED_H;
+    } else if (state === State.OSD) {
+      targetW = OSD_W;
+      targetH = OSD_H;
+    }
+
+    targetW = Math.floor(targetW * scale);
+    targetH = Math.floor(targetH * scale);
+
+    const dur = this._settings.get_int("animation-duration") || 340;
+
+    [
+      this._pillView,
+      this._compactView,
+      this._expandedView,
+      this._osdView,
+    ].forEach((v) => v.hide());
+
     const monitor = Main.layoutManager.primaryMonitor;
     if (!monitor) return;
-
-    const dims = {
-      [State.PILL]: [PILL_W, PILL_H],
-      [State.COMPACT]: [COMPACT_W, COMPACT_H],
-      [State.EXPANDED]: [EXPANDED_W, EXPANDED_H],
-      [State.OSD]: [OSD_W, OSD_H],
-    };
-    const [targetW, targetH] = dims[newState];
     const offset = this._settings.get_int("position-offset");
     const targetX =
       monitor.x + Math.floor((monitor.width - targetW) / 2) + offset;
 
-    // Hide all content views during the shape morph. Because clip_to_allocation
-    // is true, any visible content would be clipped to the old size and flash
-    // at the wrong dimensions during the animation. Showing after onComplete
-    // gives a clean black-pill-morphing transition with no content glitch.
-    this._showView(null);
-    this._actor.remove_all_transitions();
-
     this._actor.ease({
       x: targetX,
-      y: monitor.y,
       width: targetW,
       height: targetH,
       duration: dur,
       mode: Clutter.AnimationMode.EASE_OUT_EXPO,
       onComplete: () => {
-        this._showView(newState);
-        if (newState === State.EXPANDED) this._tickSeek();
-        if (
-          newState === State.OSD &&
-          this._pendingBrightnessFill !== undefined
-        ) {
-          this._osdSmoothFill.set_width(
-            Math.floor(this._osdSmoothBg.width * this._pendingBrightnessFill),
-          );
-          this._pendingBrightnessFill = undefined;
-        }
+        if (state === State.PILL) this._pillView.show();
+        else if (state === State.COMPACT) this._compactView.show();
+        else if (state === State.EXPANDED) {
+          this._expandedView.show();
+          this._tickSeek();
+        } else if (state === State.OSD) this._osdView.show();
+        if (onComplete) onComplete();
       },
     });
   }
 
-  // Passing null hides all views (used during morph animation).
-  _showView(state) {
-    this._pillView.visible = state === State.PILL;
-    this._compactView.visible = state === State.COMPACT;
-    this._expandedView.visible = state === State.EXPANDED;
-    this._osdView.visible = state === State.OSD;
-  }
-
-  // ── Destroy ──────────────────────────────────────────────────────────────
-
   destroy() {
     this._stopClock();
     this._stopSeekTracking();
-
-    if (this._waveformSrc) {
-      GLib.Source.remove(this._waveformSrc);
-      this._waveformSrc = null;
-    }
-    if (this._osdHideSrc) {
-      GLib.Source.remove(this._osdHideSrc);
-      this._osdHideSrc = null;
-    }
-    if (this._artIdleId) {
-      GLib.Source.remove(this._artIdleId);
-      this._artIdleId = null;
-    }
-    if (this._collapseTimeoutId) {
-      GLib.Source.remove(this._collapseTimeoutId);
-      this._collapseTimeoutId = null;
-    }
-
-    if (this._hoverId && this._actor) {
-      this._actor.disconnect(this._hoverId);
-      this._hoverId = 0;
-    }
-    if (this._monitorsId) {
-      Main.layoutManager.disconnect(this._monitorsId);
-      this._monitorsId = 0;
-    }
-    this._settingsIds.forEach((id) => this._settings?.disconnect(id));
-    this._settingsIds = [];
-
+    this._stopWaveform();
+    if (this._osdHideSrc) GLib.Source.remove(this._osdHideSrc);
+    if (this._artIdleId) GLib.Source.remove(this._artIdleId);
+    if (this._collapseTimeoutId) GLib.Source.remove(this._collapseTimeoutId);
+    if (this._monitorsId) Main.layoutManager.disconnect(this._monitorsId);
+    this._settingsIds.forEach((id) => this._settings.disconnect(id));
     if (this._actor) {
-      Main.uiGroup.remove_child(this._actor);
       this._actor.destroy();
       this._actor = null;
     }
-    this._settings = this._mediaProxy = null;
   }
 }

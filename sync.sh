@@ -18,6 +18,7 @@ mkdir -p "$DEST_DIR"
 cp -rv "$SRC_DIR"/*.js "$DEST_DIR/"
 cp -rv "$SRC_DIR"/*.json "$DEST_DIR/"
 cp -rv "$SRC_DIR"/*.css "$DEST_DIR/"
+cp -rv "$SRC_DIR/src" "$DEST_DIR/"
 cp -rv "$SRC_DIR/schemas" "$DEST_DIR/"
 
 # 3. Compile schemas (required for settings to work)

@@ -1,8 +1,8 @@
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 
-import { DynamicIsland } from "./island.js";
-import { MprisWatcher } from "./mpris.js";
-import { OsdInterceptor } from "./osd.js";
+import { DynamicIsland } from "./src/island.js";
+import { MprisWatcher } from "./src/mpris.js";
+import { OsdInterceptor } from "./src/osd.js";
 
 export default class DynamicIslandExtension extends Extension {
   enable() {
