@@ -72,6 +72,11 @@ export class DynamicIsland {
     this._lastTrackId = null;
     this._seekBasePosition = 0; // µs — last known authoritative position
     this._seekBaseMonoTime = 0; // GLib.get_monotonic_time() at that moment
+    this._seekDragging = false; // true while user is dragging the seek bar
+
+    // Cached data from external modules — reapplied after _refreshUI() rebuilds views
+    this._lastWeatherData = null; // { temp, icon }
+    this._lastBtDevices = []; // array of connected device descriptors
 
     // OSD
     this._osdState = null; // { icon, level, max }
@@ -221,6 +226,18 @@ export class DynamicIsland {
         }
       }
     });
+
+    // Weather widget visibility
+    watch("show-weather", () => {
+      if (this._weatherWidget)
+        this._weatherWidget.visible =
+          this._settings.get_boolean("show-weather");
+    });
+
+    // Bluetooth indicator visibility (re-evaluate against last known device list)
+    watch("show-bluetooth", () => {
+      this.updateBluetooth(this._lastBtDevices ?? []);
+    });
   }
 
   // ── Widget construction ───────────────────────────────────────────────────
@@ -305,13 +322,67 @@ export class DynamicIsland {
 
   _buildPillView() {
     const scale = this._scale;
+
+    // Root box: left indicators → flex spacer → clock
     const box = new St.BoxLayout({
       style_class: "di-pill-view",
       x_expand: true,
       y_expand: true,
-      x_align: Clutter.ActorAlign.CENTER,
+      x_align: Clutter.ActorAlign.FILL,
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `padding: 0 ${Math.floor(10 * scale)}px; spacing: ${Math.floor(6 * scale)}px;`,
+    });
+
+    // ── Bluetooth indicator (hidden until a device connects) ───────────────
+    this._btIndicator = new St.BoxLayout({
+      style_class: "di-bt-indicator",
+      vertical: false,
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `spacing: ${Math.floor(3 * scale)}px;`,
+      visible: false, // shown by updateBluetooth()
+    });
+    this._btDeviceIcon = new St.Icon({
+      style_class: "di-bt-icon",
+      icon_name: "bluetooth-active-symbolic",
+      icon_size: Math.floor(12 * scale),
       y_align: Clutter.ActorAlign.CENTER,
     });
+    this._btBatteryLabel = new St.Label({
+      style_class: "di-bt-label",
+      text: "",
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `font-size: ${Math.floor(10 * scale)}px; color: rgba(255,255,255,0.55);`,
+    });
+    this._btIndicator.add_child(this._btDeviceIcon);
+    this._btIndicator.add_child(this._btBatteryLabel);
+
+    // ── Weather widget (hidden until show-weather is enabled) ──────────────
+    this._weatherWidget = new St.BoxLayout({
+      style_class: "di-weather",
+      vertical: false,
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `spacing: ${Math.floor(3 * scale)}px;`,
+      visible: this._settings.get_boolean("show-weather"),
+    });
+    this._weatherIconLabel = new St.Label({
+      style_class: "di-weather-icon",
+      text: "",
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `font-size: ${Math.floor(13 * scale)}px;`,
+    });
+    this._weatherTempLabel = new St.Label({
+      style_class: "di-weather-temp",
+      text: "",
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `font-size: ${Math.floor(11 * scale)}px; color: rgba(255,255,255,0.65);`,
+    });
+    this._weatherWidget.add_child(this._weatherIconLabel);
+    this._weatherWidget.add_child(this._weatherTempLabel);
+
+    // ── Flex spacer (pushes clock to the right) ────────────────────────────
+    const spacer = new St.Widget({ x_expand: true });
+
+    // ── Clock ──────────────────────────────────────────────────────────────
     this._clockLabel = new St.Label({
       style_class: "di-clock-label",
       text: "--:--",
@@ -319,6 +390,10 @@ export class DynamicIsland {
       style: `font-size: ${Math.floor(13 * scale)}px;`,
     });
     this._clockLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+
+    box.add_child(this._btIndicator);
+    box.add_child(this._weatherWidget);
+    box.add_child(spacer);
     box.add_child(this._clockLabel);
     return box;
   }
@@ -487,9 +562,27 @@ export class DynamicIsland {
       width: 0,
     });
     this._seekBg.add_child(this._seekFill);
-    this._seekBg.connect("button-press-event", (actor, event) =>
-      this._onSeekClick(actor, event),
-    );
+
+    // Drag-to-seek: press starts drag, motion updates visuals, release commits D-Bus call
+    this._seekDragging = false;
+    this._seekBg.connect("button-press-event", (actor, event) => {
+      if (event.get_button() !== 1) return Clutter.EVENT_PROPAGATE;
+      this._seekDragging = true;
+      this._updateSeekFromPointer(actor, event, false); // preview position
+      return Clutter.EVENT_STOP;
+    });
+    this._seekBg.connect("motion-event", (actor, event) => {
+      if (!this._seekDragging) return Clutter.EVENT_PROPAGATE;
+      this._updateSeekFromPointer(actor, event, false); // live scrub preview
+      return Clutter.EVENT_STOP;
+    });
+    this._seekBg.connect("button-release-event", (actor, event) => {
+      if (!this._seekDragging || event.get_button() !== 1)
+        return Clutter.EVENT_PROPAGATE;
+      this._seekDragging = false;
+      this._updateSeekFromPointer(actor, event, true); // commit via D-Bus
+      return Clutter.EVENT_STOP;
+    });
 
     this._timeRow = new St.BoxLayout({
       style_class: "di-time-row",
@@ -794,6 +887,7 @@ export class DynamicIsland {
 
   _refreshUI() {
     const currentState = this._state;
+    this._seekDragging = false; // cancel any in-progress drag
 
     this._stopWaveform();
     this._stopSeekTracking();
@@ -859,6 +953,10 @@ export class DynamicIsland {
       this._startWaveform();
       this._startSeekTracking();
     }
+
+    // Reapply external state that was cached before the rebuild
+    if (this._lastWeatherData) this.updateWeather(this._lastWeatherData);
+    if (this._lastBtDevices?.length) this.updateBluetooth(this._lastBtDevices);
 
     if (this._mediaProxy) {
       const meta =
@@ -1130,6 +1228,57 @@ export class DynamicIsland {
     }
   }
 
+  // ── Weather display ───────────────────────────────────────────────────────
+
+  /**
+   * Called by WeatherClient whenever fresh data arrives.
+   * @param {{ temp: string, icon: string }} data
+   */
+  updateWeather(data) {
+    this._lastWeatherData = data;
+    if (!this._weatherWidget) return;
+    if (data?.temp) {
+      this._weatherTempLabel?.set_text(data.temp);
+      this._weatherIconLabel?.set_text(data.icon ?? "");
+    }
+    this._weatherWidget.visible =
+      this._settings.get_boolean("show-weather") && !!data?.temp;
+  }
+
+  // ── Bluetooth display ─────────────────────────────────────────────────────
+
+  /**
+   * Called by BluetoothWatcher whenever connected devices change.
+   * @param {Array<{ name: string, icon: string, battery: number|null }>} devices
+   */
+  updateBluetooth(devices) {
+    this._lastBtDevices = devices;
+    if (!this._btIndicator) return;
+
+    const show = this._settings.get_boolean("show-bluetooth");
+    const hasConn = devices.length > 0;
+    this._btIndicator.visible = show && hasConn;
+    if (!hasConn) return;
+
+    const primary = devices[0];
+    const iconMap = {
+      "audio-headset": "audio-headset-symbolic",
+      "audio-headphones": "audio-headphones-symbolic",
+      phone: "phone-symbolic",
+      computer: "computer-symbolic",
+      "input-gaming": "input-gaming-symbolic",
+      "input-keyboard": "input-keyboard-symbolic",
+      "input-mouse": "input-mouse-symbolic",
+    };
+    this._btDeviceIcon?.set_icon_name(
+      iconMap[primary.icon] ?? "bluetooth-active-symbolic",
+    );
+    if (devices.length > 1) this._btBatteryLabel?.set_text(`${devices.length}`);
+    else if (primary.battery !== null && primary.battery !== undefined)
+      this._btBatteryLabel?.set_text(`${primary.battery}%`);
+    else this._btBatteryLabel?.set_text("");
+  }
+
   // ── Playback controls ─────────────────────────────────────────────────────
 
   _onPlayPause() {
@@ -1152,30 +1301,46 @@ export class DynamicIsland {
     );
   }
 
-  // ── Click-to-Seek — FIX #4 ───────────────────────────────────────────────
+  // ── Seek interaction (click + drag) — FIX #4 ────────────────────────────
 
-  _onSeekClick(actor, event) {
+  /**
+   * Unified seek handler for both click and drag.
+   *
+   * @param {Clutter.Actor} actor  — the seek bar background widget
+   * @param {Clutter.Event} event  — the input event
+   * @param {boolean}       commit — false = update visuals only (drag preview);
+   *                                 true  = send SetPosition D-Bus call (release)
+   */
+  _updateSeekFromPointer(actor, event, commit) {
     if (!this._mediaProxy || this._trackLength <= 0)
       return Clutter.EVENT_PROPAGATE;
-
     const canSeek =
       this._mediaProxy.get_cached_property("CanSeek")?.unpack() ?? true;
     if (!canSeek) return Clutter.EVENT_PROPAGATE;
 
-    const [clickX] = event.get_coords();
-    const [actorX] = actor.get_transformed_position();
-    const actorW = actor.get_width();
-    if (actorW <= 0) return Clutter.EVENT_PROPAGATE;
+    const [px] = event.get_coords();
+    const [ax] = actor.get_transformed_position();
+    const aw = actor.get_width();
+    if (aw <= 0) return Clutter.EVENT_PROPAGATE;
 
-    const fraction = Math.max(0, Math.min((clickX - actorX) / actorW, 1));
+    const fraction = Math.max(0, Math.min((px - ax) / aw, 1));
     const targetµs = Math.round(fraction * this._trackLength);
+
+    // Always update visuals immediately (smooth scrub feedback)
+    if (this._seekFill) this._seekFill.set_width(Math.floor(aw * fraction));
+    if (this._posLabel) this._posLabel.set_text(this._µsToTime(targetµs));
+
+    if (!commit) return Clutter.EVENT_STOP;
+
+    // Commit: update local baseline so interpolation continues from new pos
+    this._seekBasePosition = targetµs;
+    this._seekBaseMonoTime = GLib.get_monotonic_time();
 
     const meta =
       this._mediaProxy.get_cached_property("Metadata")?.deepUnpack() ?? {};
     const trackId =
       meta["mpris:trackid"]?.unpack() ??
       "/org/mpris/MediaPlayer2/TrackList/NoTrack";
-
     try {
       this._mediaProxy.call(
         "SetPosition",
@@ -1192,13 +1357,6 @@ export class DynamicIsland {
     } catch (e) {
       console.warn("DynamicIsland: SetPosition failed:", e.message);
     }
-
-    // FIX #4: Update local baseline so interpolation continues from new pos
-    this._seekBasePosition = targetµs;
-    this._seekBaseMonoTime = GLib.get_monotonic_time();
-
-    if (this._seekFill) this._seekFill.set_width(Math.floor(actorW * fraction));
-    if (this._posLabel) this._posLabel.set_text(this._µsToTime(targetµs));
 
     return Clutter.EVENT_STOP;
   }
