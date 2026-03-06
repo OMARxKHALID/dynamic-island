@@ -3,12 +3,14 @@
   <schema id="org.gnome.shell.extensions.dynamic-island"
           path="/org/gnome/shell/extensions/dynamic-island/">
 
+    <!-- ── Position ──────────────────────────────────────────────────── -->
     <key name="position-offset" type="i">
       <default>0</default>
-      <summary>Horizontal offset from screen center in pixels</summary>
+      <summary>Horizontal offset from screen center (px)</summary>
       <description>Shift the island left (negative) or right (positive) from center.</description>
     </key>
 
+    <!-- ── Features ──────────────────────────────────────────────────── -->
     <key name="show-album-art" type="b">
       <default>true</default>
       <summary>Show album art in expanded view</summary>
@@ -18,7 +20,7 @@
     <key name="show-seek-bar" type="b">
       <default>true</default>
       <summary>Show seek bar in expanded view</summary>
-      <description>Display playback progress bar in the expanded view.</description>
+      <description>Display playback progress bar and timestamps in the expanded view.</description>
     </key>
 
     <key name="auto-hide" type="b">
@@ -33,16 +35,113 @@
       <description>Show volume and brightness changes inside the island instead of the default GNOME OSD popup.</description>
     </key>
 
+    <!-- Notification toast toggle -->
+    <key name="show-notifications" type="b">
+      <default>true</default>
+      <summary>Show notification toasts in the island</summary>
+      <description>When enabled, incoming system notifications briefly appear inside the Dynamic Island.</description>
+    </key>
+
+    <!-- ── Media player filter ───────────────────────────────────────── -->
+    <!--
+      Array of blocked MPRIS player identities (lowercase bus-name suffixes).
+      e.g. ["firefox", "chromium", "plasma-browser-integration"]
+
+      The suffix is everything after "org.mpris.MediaPlayer2." with trailing
+      instance IDs (e.g. ".instance1234") stripped and lowercased.
+      So "firefox" blocks both org.mpris.MediaPlayer2.firefox and
+      org.mpris.MediaPlayer2.firefox.instance5678.
+    -->
+    <key name="player-blocklist" type="as">
+      <default>[]</default>
+      <summary>Blocked media player identities</summary>
+      <description>List of MPRIS player bus-name suffixes (lowercase) that should never appear in the Dynamic Island.</description>
+    </key>
+
+    <!-- ── Timing ────────────────────────────────────────────────────── -->
     <key name="animation-duration" type="i">
       <default>280</default>
-      <summary>Animation duration in milliseconds</summary>
+      <summary>Animation duration (ms)</summary>
       <description>Duration for island expand and collapse animations.</description>
     </key>
 
+    <key name="osd-timeout" type="i">
+      <default>2500</default>
+      <summary>OSD auto-hide timeout (ms)</summary>
+      <description>How long the volume/brightness OSD remains visible before collapsing.</description>
+    </key>
+
+    <!-- ── Appearance ────────────────────────────────────────────────── -->
     <key name="notch-scale" type="d">
       <default>1.0</default>
-      <summary>Notch Scale</summary>
-      <description>Overall scale multiplier for the island (0.8 to 1.5 recommended).</description>
+      <summary>Global scale multiplier</summary>
+      <description>Overall scale multiplier for the island (0.5–3.0).</description>
+    </key>
+
+    <key name="background-color" type="s">
+      <default>'#0a0a0a'</default>
+      <summary>Background color (HEX, e.g. #0a0a0a)</summary>
+    </key>
+
+    <key name="background-opacity" type="d">
+      <default>0.84</default>
+      <summary>Background opacity (0.1–1.0)</summary>
+    </key>
+
+    <key name="dynamic-art-color" type="b">
+      <default>false</default>
+      <summary>Use album art dominant colour as island background</summary>
+      <description>When enabled, the island background colour is derived from the dominant colour in the current album artwork.</description>
+    </key>
+
+    <!-- ── State dimensions ──────────────────────────────────────────── -->
+    <key name="pill-width" type="i">
+      <default>160</default>
+      <summary>Idle state width (px)</summary>
+    </key>
+    <key name="pill-height" type="i">
+      <default>34</default>
+      <summary>Idle state height (px)</summary>
+    </key>
+
+    <key name="compact-width" type="i">
+      <default>190</default>
+      <summary>Compact (playing) state width (px)</summary>
+    </key>
+    <key name="compact-height" type="i">
+      <default>34</default>
+      <summary>Compact (playing) state height (px)</summary>
+    </key>
+
+    <key name="expanded-width" type="i">
+      <default>450</default>
+      <summary>Expanded (hover) state width (px)</summary>
+    </key>
+    <key name="expanded-height" type="i">
+      <default>140</default>
+      <summary>Expanded (hover) state height (px)</summary>
+    </key>
+
+    <key name="osd-width" type="i">
+      <default>325</default>
+      <summary>OSD state width (px)</summary>
+    </key>
+    <key name="osd-height" type="i">
+      <default>110</default>
+      <summary>OSD state height (px)</summary>
+    </key>
+
+    <!-- ── Artwork sizes ─────────────────────────────────────────────── -->
+    <key name="art-expanded-size" type="i">
+      <default>110</default>
+      <summary>Album art size in expanded view (px)</summary>
+      <description>Width and height of the album artwork in the expanded hover view.</description>
+    </key>
+
+    <key name="art-compact-size" type="i">
+      <default>28</default>
+      <summary>Album art thumbnail size in compact view (px)</summary>
+      <description>Width and height of the small album art thumbnail in the compact playing view.</description>
     </key>
 
   </schema>

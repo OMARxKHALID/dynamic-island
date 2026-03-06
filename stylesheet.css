@@ -5,13 +5,7 @@
 /* ── Root container ─────────────────────────────────────────────────────── */
 
 .dynamic-island {
-  background-color: #000000;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-top: none;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.65),
-    0 2px 8px rgba(0, 0, 0, 0.45),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  background-color: transparent;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -34,8 +28,12 @@
    COMPACT VIEW
    ════════════════════════════════════════════════════════════════════════ */
 
+/*
+ * Reduced left padding so the art thumbnail sits flush against the
+ * left edge of the pill — keeps it consistently at the "corner."
+ */
 .di-compact-view {
-  padding: 0 14px;
+  padding: 0 10px 0 6px;
 }
 
 .di-compact-art {
@@ -48,14 +46,13 @@
 }
 
 /* ── CAVA-style waveform ─────────────────────────────────────────────────
-
    Each bar is solid white. The .di-waveform-fade overlay sits on top and
-   fades the tops of all bars into the black island background, producing
-   the characteristic CAVA "emerging from darkness" look.
+   fades the tops of all bars into the dark island background, producing
+   the "CAVA emerging from darkness" look.
    ─────────────────────────────────────────────────────────────────────── */
 
 .di-waveform-bar {
-  width: 3px;
+  width: 3px; /* fallback — explicit width also set in JS */
   border-radius: 2px 2px 1px 1px;
   background-color: rgba(255, 255, 255, 0.88);
 }
@@ -117,7 +114,7 @@
   font-feature-settings: "tnum" 1;
 }
 
-/* ── Playback controls — horizontal row ──────────────────────────────── */
+/* ── Playback controls ───────────────────────────────────────────────── */
 
 .di-controls {
   margin-top: 2px;
@@ -132,6 +129,11 @@
 
 .di-ctrl-btn:hover {
   background-color: rgba(255, 255, 255, 0.1);
+}
+
+.di-ctrl-btn:focus {
+  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline-offset: 2px;
 }
 
 .di-ctrl-icon {
@@ -179,4 +181,38 @@
 .di-osd-smooth-fill {
   background-color: #ffffff;
   border-radius: 9999px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   NOTIFICATION TOAST VIEW  (Feature 2)
+   ════════════════════════════════════════════════════════════════════════ */
+
+.di-notif-view {
+  /* padding set inline (scale-aware) */
+}
+
+.di-notif-icon {
+  color: rgba(255, 255, 255, 0.85);
+  min-width: 26px;
+  min-height: 26px;
+}
+
+.di-notif-app {
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.di-notif-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.di-notif-body {
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.55);
 }
