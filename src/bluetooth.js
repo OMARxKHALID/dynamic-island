@@ -4,8 +4,7 @@
  * Watches the BlueZ D-Bus service for connected Bluetooth devices and emits
  * an onChanged callback whenever the set of connected devices changes.
  *
- * Uses the system D-Bus; gracefully does nothing on systems where BlueZ is
- * not running (desktop without Bluetooth hardware, etc.).
+ * Gracefully does nothing on systems where BlueZ is not running.
  *
  * Calls onChanged([ { name, icon, battery } ]) — list of currently connected
  * devices; empty array means no devices are connected.
@@ -16,28 +15,27 @@
 import GLib from "gi://GLib";
 import Gio from "gi://Gio";
 
-const BLUEZ_BUS = "org.bluez";
-const OBJ_MGR_IFACE = "org.freedesktop.DBus.ObjectManager";
-const PROPS_IFACE = "org.freedesktop.DBus.Properties";
-const DEVICE_IFACE = "org.bluez.Device1";
-const BATTERY_IFACE = "org.bluez.Battery1";
-const CALL_TIMEOUT = 5000; // ms
+const BLUEZ_BUS    = "org.bluez";
+const OBJ_MGR_IFACE  = "org.freedesktop.DBus.ObjectManager";
+const PROPS_IFACE    = "org.freedesktop.DBus.Properties";
+const DEVICE_IFACE   = "org.bluez.Device1";
+const BATTERY_IFACE  = "org.bluez.Battery1";
+const CALL_TIMEOUT   = 5000; // ms
 
 export class BluetoothWatcher {
   constructor(settings) {
     this._settings = settings;
     this._devices = new Map(); // objectPath → { name, icon, connected, battery }
-    this._sigIds = []; // [Gio.DBus.system signal ids]
+    this._sigIds = [];
     this._onChanged = null;
   }
 
-  // ── Public API ─────────────────────────────────────────────────────────────
+  // ── Public API ────────────────────────────────────────────────────────────
 
-  /** @param {function} onChanged — called with array of connected device descriptors */
   start(onChanged) {
     this._onChanged = onChanged;
 
-    // ── PropertiesChanged: device Connected / Name toggled, or battery updated
+    // PropertiesChanged: Connected / Name toggled, or battery updated
     this._sigIds.push(
       Gio.DBus.system.signal_subscribe(
         BLUEZ_BUS,
@@ -61,7 +59,7 @@ export class BluetoothWatcher {
       ),
     );
 
-    // ── InterfacesAdded: new device appeared (e.g. paired but not connected before)
+    // InterfacesAdded: new device appeared
     this._sigIds.push(
       Gio.DBus.system.signal_subscribe(
         BLUEZ_BUS,
@@ -75,17 +73,13 @@ export class BluetoothWatcher {
           try {
             const [path, ifaces] = params.deepUnpack();
             if (DEVICE_IFACE in ifaces)
-              this._addDevice(
-                path,
-                ifaces[DEVICE_IFACE],
-                ifaces[BATTERY_IFACE],
-              );
+              this._addDevice(path, ifaces[DEVICE_IFACE], ifaces[BATTERY_IFACE]);
           } catch (_e) {}
         },
       ),
     );
 
-    // ── InterfacesRemoved: device unpaired / adapter removed
+    // InterfacesRemoved: device unpaired / adapter removed
     this._sigIds.push(
       Gio.DBus.system.signal_subscribe(
         BLUEZ_BUS,
@@ -110,7 +104,7 @@ export class BluetoothWatcher {
       ),
     );
 
-    // ── Initial enumeration: GetManagedObjects to populate existing devices
+    // Initial enumeration
     Gio.DBus.system.call(
       BLUEZ_BUS,
       "/",
@@ -122,29 +116,23 @@ export class BluetoothWatcher {
       CALL_TIMEOUT,
       null,
       (conn, res) => {
-        if (!this._devices) return; // destroyed before callback fired
+        if (!this._devices) return;
         try {
-          const [[objects]] = conn.call_finish(res).deepUnpack();
+          // deepUnpack() on (a{oa{sa{sv}}}) returns a JS Array (the tuple).
+          // The first element is the objects dict — destructure with [objects],
+          // NOT [[objects]], which would try to iterate a plain JS Object.
+          const [objects] = conn.call_finish(res).deepUnpack();
           for (const [path, ifaces] of Object.entries(objects)) {
             if (DEVICE_IFACE in ifaces)
-              this._addDevice(
-                path,
-                ifaces[DEVICE_IFACE],
-                ifaces[BATTERY_IFACE],
-              );
+              this._addDevice(path, ifaces[DEVICE_IFACE], ifaces[BATTERY_IFACE]);
           }
         } catch (e) {
-          // BlueZ is commonly not available; log at debug level only
-          console.debug(
-            "DynamicIsland/Bluetooth: BlueZ unavailable:",
-            e.message,
-          );
+          console.debug("DynamicIsland/Bluetooth: BlueZ unavailable:", e.message);
         }
       },
     );
   }
 
-  /** Returns a snapshot of currently connected devices. */
   getConnected() {
     if (!this._devices) return [];
     return [...this._devices.values()].filter((d) => d.connected);
@@ -158,7 +146,7 @@ export class BluetoothWatcher {
     this._settings = null;
   }
 
-  // ── Private ────────────────────────────────────────────────────────────────
+  // ── Private ───────────────────────────────────────────────────────────────
 
   _addDevice(path, deviceProps, batteryProps) {
     const connected = deviceProps["Connected"]?.unpack() ?? false;
@@ -166,14 +154,19 @@ export class BluetoothWatcher {
       deviceProps["Name"]?.unpack() ??
       deviceProps["Address"]?.unpack() ??
       "Device";
-    const icon = deviceProps["Icon"]?.unpack() ?? "";
+    const icon    = deviceProps["Icon"]?.unpack() ?? "";
     const battery = batteryProps?.["Percentage"]?.unpack() ?? null;
 
     this._devices.set(path, { connected, name, icon, battery });
 
-    // Only emit if this device is actually connected — adding a remembered
-    // device that is not connected should not trigger a UI update.
-    if (connected) this._emit();
+    if (connected) {
+      // Debounce by 250 ms — lets the battery PropertiesChanged event arrive
+      // before we emit, preventing a "name-only → name+battery%" flicker.
+      GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+        if (this._devices) this._emit();
+        return GLib.SOURCE_REMOVE;
+      });
+    }
   }
 
   _applyDeviceProps(path, changed) {
@@ -181,14 +174,8 @@ export class BluetoothWatcher {
     if (!dev) return;
 
     let dirty = false;
-    if ("Connected" in changed) {
-      dev.connected = changed["Connected"].unpack();
-      dirty = true;
-    }
-    if ("Name" in changed) {
-      dev.name = changed["Name"].unpack();
-      dirty = true;
-    }
+    if ("Connected" in changed) { dev.connected = changed["Connected"].unpack(); dirty = true; }
+    if ("Name"      in changed) { dev.name      = changed["Name"].unpack();      dirty = true; }
 
     if (dirty) this._emit();
   }

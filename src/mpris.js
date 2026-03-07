@@ -7,18 +7,15 @@
  *   "player-changed" (proxy) — active player metadata / status changed
  *   "player-closed"          — no MPRIS players remain
  *
- * FIX #3 — Media Player Visibility:
- *   The active player is only promoted (and "player-changed" emitted) when its
- *   PlaybackStatus is "Playing". A browser that registers MPRIS but has nothing
- *   playing will NOT trigger the island.
+ * The active player is only promoted (and "player-changed" emitted) when its
+ * PlaybackStatus is "Playing".  A browser that registers MPRIS but has nothing
+ * playing will NOT trigger the island.
  *
- * NEW — Player Blocklist:
- *   Players whose bus-name identity appears in the "player-blocklist" GSettings
- *   key are silently ignored. The identity is the lowercase suffix of the D-Bus
- *   bus name after "org.mpris.MediaPlayer2." with trailing instance numbers
- *   stripped, e.g. "firefox", "chromium", "vlc".
- *   The blocklist is re-read on every check so preference changes take effect
- *   immediately without restarting the extension.
+ * Players whose bus-name identity appears in the "player-blocklist" GSettings
+ * key are silently ignored.  The blocklist is re-read on every check so
+ * preference changes take effect immediately without restarting the extension.
+ *
+ * GSettings keys consumed: player-blocklist
  */
 
 import GLib from "gi://GLib";
@@ -38,6 +35,13 @@ const MPRIS_PLAYER_IFACE_XML = `
     <method name="PlayPause"/>
     <method name="Stop"/>
     <method name="Play"/>
+    <method name="Seek">
+      <arg direction="in" type="x" name="Offset"/>
+    </method>
+    <method name="SetPosition">
+      <arg direction="in" type="o" name="TrackId"/>
+      <arg direction="in" type="x" name="Position"/>
+    </method>
     <property name="PlaybackStatus" type="s"     access="read"/>
     <property name="Metadata"       type="a{sv}" access="read"/>
     <property name="Volume"         type="d"     access="readwrite"/>
@@ -48,6 +52,9 @@ const MPRIS_PLAYER_IFACE_XML = `
     <property name="CanPause"       type="b"     access="read"/>
     <property name="CanSeek"        type="b"     access="read"/>
     <property name="CanControl"     type="b"     access="read"/>
+    <signal name="Seeked">
+      <arg type="x" name="Position"/>
+    </signal>
   </interface>
 </node>`;
 
@@ -56,30 +63,28 @@ export const MprisWatcher = GObject.registerClass(
     Signals: {
       "player-changed": { param_types: [GObject.TYPE_OBJECT] },
       "player-closed": {},
+      // Emitted when the active player fires the MPRIS Seeked signal.
+      // Carries the new position in microseconds (GLib.Variant "x" → Number).
+      "player-seeked": { param_types: [GObject.TYPE_DOUBLE] },
     },
   },
   class MprisWatcher extends GObject.Object {
-    /**
-     * @param {Gio.Settings} settings — extension settings, used to read
-     *   "player-blocklist" dynamically on every player promotion check.
-     */
     constructor(settings) {
       super();
       this._settings = settings;
-      this._players = new Map(); // busName → { proxy, changedId }
+      this._players = new Map(); // busName → { proxy, changedId, seekedId }
       this._activeBusName = null;
       this._dbusSignalId = 0;
       this._playerIfaceInfo = null;
     }
 
-    // ── Public ──────────────────────────────────────────────────────────
+    // ── Public ──────────────────────────────────────────────────────────────
 
     start() {
       try {
         const nodeInfo = Gio.DBusNodeInfo.new_for_xml(MPRIS_PLAYER_IFACE_XML);
         this._playerIfaceInfo = nodeInfo.lookup_interface(MPRIS_PLAYER_IFACE);
 
-        // Watch for players appearing / disappearing on D-Bus
         this._dbusSignalId = Gio.DBus.session.signal_subscribe(
           "org.freedesktop.DBus",
           "org.freedesktop.DBus",
@@ -136,8 +141,10 @@ export const MprisWatcher = GObject.registerClass(
         this._dbusSignalId = 0;
       }
       if (this._players) {
-        for (const { proxy, changedId } of this._players.values())
+        for (const { proxy, changedId, seekedId } of this._players.values()) {
           proxy.disconnect(changedId);
+          if (seekedId) proxy.disconnect(seekedId);
+        }
         this._players.clear();
         this._players = null;
       }
@@ -146,33 +153,19 @@ export const MprisWatcher = GObject.registerClass(
       this._settings = null;
     }
 
-    // ── Private ─────────────────────────────────────────────────────────
+    // ── Private ──────────────────────────────────────────────────────────────
 
     /**
-     * Extract the normalized identity from a full MPRIS bus name.
-     *
-     * "org.mpris.MediaPlayer2.firefox"            → "firefox"
+     * Normalise a full MPRIS bus name to a lowercase identity string.
      * "org.mpris.MediaPlayer2.firefox.instance12" → "firefox"
-     * "org.mpris.MediaPlayer2.VLC"                → "vlc"
-     *
-     * The result is always lowercase.  Instance suffixes (a dot followed
-     * by one or more digit-only segments) are stripped so that both
-     * "spotify" and "spotify.instance1234" are matched by the single
-     * blocklist entry "spotify".
      */
     _busNameToIdentity(busName) {
-      // Strip the MPRIS prefix
       let id = busName.slice(MPRIS_BUS_PREFIX.length).toLowerCase();
-      // Strip trailing .instance<digits> segments, e.g. ".instance12345"
+      // Strip trailing .instance<digits> segments
       id = id.replace(/(\.[0-9]+)+$/, "");
       return id;
     }
 
-    /**
-     * Returns true if this bus name is on the user's blocklist.
-     * The blocklist is read from settings on every call so changes in
-     * the preferences window take effect without restarting the extension.
-     */
     _isBlocked(busName) {
       if (!this._settings) return false;
       let list;
@@ -189,7 +182,6 @@ export const MprisWatcher = GObject.registerClass(
     _addPlayer(busName) {
       if (this._players.has(busName)) return;
 
-      // NEW: silently ignore blocked players — don't even create a proxy
       if (this._isBlocked(busName)) {
         console.debug(`DynamicIsland: ignoring blocked player ${busName}`);
         return;
@@ -222,8 +214,6 @@ export const MprisWatcher = GObject.registerClass(
             (_proxy, changed) => {
               if (!this._players) return;
 
-              // Re-check blocklist on every property change — the user
-              // may have added this player to the list since startup.
               if (this._isBlocked(busName)) {
                 this._removePlayer(busName);
                 return;
@@ -231,30 +221,41 @@ export const MprisWatcher = GObject.registerClass(
 
               const dict = changed.deepUnpack();
 
-              // FIX #3: When a non-active player starts Playing, promote it.
               if (busName !== this._activeBusName && "PlaybackStatus" in dict) {
-                const newStatus = dict["PlaybackStatus"].unpack();
-                if (newStatus === "Playing") {
+                if (dict["PlaybackStatus"].unpack() === "Playing") {
                   this._setActive(busName);
                   return;
                 }
               }
 
-              // Emit for the active player on any property change so the
-              // island can update play/pause, seek bar, title, etc.
               if (busName === this._activeBusName)
                 this.emit("player-changed", proxy);
             },
           );
 
-          this._players.set(busName, { proxy, changedId });
+          // Subscribe to the MPRIS Seeked signal so external scrubbing
+          // (e.g. user drags the slider in Spotify/VLC) is reflected
+          // immediately in the island seek bar without waiting for the
+          // next tick. The signal carries the new absolute position in µs.
+          const seekedId = proxy.connect(
+            "g-signal",
+            (_proxy, _senderName, signalName, params) => {
+              if (!this._players) return;
+              if (signalName !== "Seeked") return;
+              if (busName !== this._activeBusName) return;
+              try {
+                const [posMicros] = params.deepUnpack();
+                this.emit("player-seeked", Number(posMicros));
+              } catch (_e) {}
+            },
+          );
 
-          // FIX #3: Only promote to active when actually Playing.
-          const status = this._getStatus(proxy);
-          if (status === "Playing") {
+          this._players.set(busName, { proxy, changedId, seekedId });
+
+          // Only promote to active when actually playing
+          if (this._getStatus(proxy) === "Playing") {
             this._setActive(busName);
           } else if (!this._activeBusName) {
-            // Track silently — do NOT emit player-changed yet.
             this._activeBusName = busName;
           }
         },
@@ -266,6 +267,7 @@ export const MprisWatcher = GObject.registerClass(
       if (!entry) return;
 
       entry.proxy.disconnect(entry.changedId);
+      if (entry.seekedId) entry.proxy.disconnect(entry.seekedId);
       this._players.delete(busName);
 
       if (this._activeBusName !== busName) return;
@@ -279,7 +281,7 @@ export const MprisWatcher = GObject.registerClass(
         }
       }
 
-      // Fall back to any non-blocked player, or signal that all are gone
+      // Fall back to any non-blocked player, or signal all gone
       for (const [name] of this._players) {
         if (!this._isBlocked(name)) {
           this._setActive(name);
@@ -290,10 +292,6 @@ export const MprisWatcher = GObject.registerClass(
       this.emit("player-closed");
     }
 
-    /**
-     * Promote busName to active and emit "player-changed".
-     * Only call this when you actually want the island to react.
-     */
     _setActive(busName) {
       this._activeBusName = busName;
       const entry = this._players?.get(busName);

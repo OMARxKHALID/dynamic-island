@@ -2,318 +2,429 @@
  * prefs.js
  *
  * Preferences window for Dynamic Island.
- * Runs in the GTK/Adw preferences process — never import Clutter/St/Shell here.
+ * Runs in the GTK/Adw preferences process — NEVER import Clutter/St/Shell here.
+ *
+ * Pages:
+ *  1. Look & Feel  — position, art, colours, scale
+ *  2. Features     — auto-hide, OSD, notifications, weather, player filter
+ *  3. Scrobbling   — Last.fm and ListenBrainz credentials
+ *  4. System       — reset, about
  */
 
 import Adw from "gi://Adw";
 import Gtk from "gi://Gtk";
 import Gio from "gi://Gio";
-import GLib from "gi://GLib";
-import Soup from "gi://Soup";
 import { ExtensionPreferences } from "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js";
 
 export default class DynamicIslandPrefs extends ExtensionPreferences {
   fillPreferencesWindow(window) {
     const settings = this.getSettings();
-    window.set_default_size(700, 680);
+    window.set_default_size(720, 700);
     window.set_title("Dynamic Island");
 
-    // PAGE 1: Look & Feel
-    const appearancePage = new Adw.PreferencesPage({
+    window.add(this._buildAppearancePage(settings));
+    window.add(this._buildFeaturesPage(settings));
+    window.add(this._buildScrobblingPage(settings));
+    window.add(this._buildSystemPage(settings));
+  }
+
+  // ── Page 1: Look & Feel ───────────────────────────────────────────────────
+
+  _buildAppearancePage(settings) {
+    const page = new Adw.PreferencesPage({
       title: "Look & Feel",
       icon_name: "applications-graphics-symbolic",
     });
-    window.add(appearancePage);
 
     const layoutGroup = new Adw.PreferencesGroup({
       title: "Position & Visibility",
       description: "Adjust where the island appears and what it shows",
     });
-    appearancePage.add(layoutGroup);
+    page.add(layoutGroup);
 
-    layoutGroup.add(
-      this._spinRow(settings, "position-offset", {
-        title: "Horizontal Shift",
-        subtitle: "Move the island left (−) or right (+) for camera alignment",
-        icon: "go-next-symbolic",
-        lower: -1200,
-        upper: 1200,
-        step: 5,
-        page: 50,
-      }),
-    );
+    layoutGroup.add(this._spinRow(settings, "position-offset", {
+      title: "Horizontal Shift",
+      subtitle: "Move the island left (−) or right (+) for notch / camera alignment",
+      icon: "go-next-symbolic",
+      lower: -1200, upper: 1200, step: 5, page: 50,
+    }));
 
-    layoutGroup.add(
-      this._switchRow(settings, "show-album-art", {
-        title: "Show Music Art",
-        subtitle: "Display album covers in the expanded view",
-        icon: "image-x-generic-symbolic",
-      }),
-    );
+    layoutGroup.add(this._switchRow(settings, "show-album-art", {
+      title: "Show Album Art",
+      subtitle: "Display album covers in the expanded view",
+      icon: "image-x-generic-symbolic",
+    }));
 
-    layoutGroup.add(
-      this._switchRow(settings, "dynamic-art-color", {
-        title: "Dynamic Art Colour",
-        subtitle:
-          "Tint the island background with the dominant colour from album art",
-        icon: "color-select-symbolic",
-      }),
-    );
+    layoutGroup.add(this._switchRow(settings, "dynamic-art-color", {
+      title: "Dynamic Art Colour",
+      subtitle: "Tint the island background with the dominant colour from album art",
+      icon: "color-select-symbolic",
+    }));
 
-    layoutGroup.add(
-      this._switchRow(settings, "show-seek-bar", {
-        title: "Show Progress Bar",
-        subtitle: "Display the music timer and seek bar",
-        icon: "media-seek-forward-symbolic",
-      }),
-    );
+    layoutGroup.add(this._switchRow(settings, "show-seek-bar", {
+      title: "Show Progress Bar",
+      subtitle: "Display the music timer and seek bar in the expanded view",
+      icon: "media-seek-forward-symbolic",
+    }));
 
-    layoutGroup.add(
-      this._spinRow(settings, "notch-scale", {
-        title: "Global Scaling",
-        subtitle: "Resize the entire island interface",
-        icon: "zoom-in-symbolic",
-        lower: 0.5,
-        upper: 3.0,
-        step: 0.05,
-        page: 0.1,
-        digits: 2,
-      }),
-    );
+    layoutGroup.add(this._spinRow(settings, "notch-scale", {
+      title: "Global Scaling",
+      subtitle: "Resize the entire island interface",
+      icon: "zoom-in-symbolic",
+      lower: 0.5, upper: 3.0, step: 0.05, page: 0.1, digits: 2,
+    }));
 
     const styleGroup = new Adw.PreferencesGroup({
       title: "Colors & Transparency",
       description: "Fine-tune the island appearance",
     });
-    appearancePage.add(styleGroup);
+    page.add(styleGroup);
 
     const colorRow = new Adw.EntryRow({
-      title: "Island Color (HEX)",
+      title: "Island Color (HEX, e.g. #0a0a0a)",
       text: settings.get_string("background-color"),
     });
-
     colorRow.connect("changed", () => {
       const text = colorRow.get_text().trim();
       if (/^#[0-9A-Fa-f]{6}$/.test(text))
         settings.set_string("background-color", text);
     });
-
     styleGroup.add(colorRow);
 
-    styleGroup.add(
-      this._spinRow(settings, "background-opacity", {
-        title: "Transparency",
-        lower: 0.1,
-        upper: 1.0,
-        step: 0.05,
-        digits: 2,
-      }),
-    );
+    styleGroup.add(this._spinRow(settings, "background-opacity", {
+      title: "Transparency",
+      lower: 0.1, upper: 1.0, step: 0.05, digits: 2,
+    }));
 
-    // PAGE 2: Features
-    const behaviorPage = new Adw.PreferencesPage({
+    return page;
+  }
+
+  // ── Page 2: Features ──────────────────────────────────────────────────────
+
+  _buildFeaturesPage(settings) {
+    const page = new Adw.PreferencesPage({
       title: "Features",
       icon_name: "preferences-system-symbolic",
     });
-    window.add(behaviorPage);
 
     const generalGroup = new Adw.PreferencesGroup({
       title: "Display Logic",
       description: "Configure how and when the island shows up",
     });
-    behaviorPage.add(generalGroup);
+    page.add(generalGroup);
 
-    generalGroup.add(
-      this._switchRow(settings, "auto-hide", {
-        title: "Hide When Idle",
-        subtitle: "Only show the island when music or alerts are active",
-        icon: "eye-not-looking-symbolic",
-      }),
-    );
+    generalGroup.add(this._switchRow(settings, "auto-hide", {
+      title: "Auto-Hide When Idle",
+      subtitle: "Only show the island when music or alerts are active",
+      icon: "eye-not-looking-symbolic",
+    }));
 
-    generalGroup.add(
-      this._switchRow(settings, "intercept-osd", {
-        title: "System Notch Alerts",
-        subtitle: "Show volume and brightness changes inside the notch",
-        icon: "audio-volume-high-symbolic",
-      }),
-    );
+    const delayRow = this._spinRow(settings, "auto-hide-delay", {
+      title: "Idle Timeout (seconds)",
+      subtitle: "How long to wait before hiding (0 = wait until media stops)",
+      lower: 0, upper: 120, step: 5, page: 15,
+    });
+    generalGroup.add(delayRow);
 
-    generalGroup.add(
-      this._spinRow(settings, "osd-timeout", {
-        title: "Alert Duration (ms)",
-        subtitle: "How long volume and brightness popups stay visible",
-        lower: 500,
-        upper: 10000,
-        step: 250,
-      }),
-    );
+    const updateDelayRow = () => {
+      delayRow.set_sensitive(settings.get_boolean("auto-hide"));
+    };
+    updateDelayRow();
+    settings.connect("changed::auto-hide", updateDelayRow);
 
-    generalGroup.add(
-      this._switchRow(settings, "show-notifications", {
-        title: "Notification Toasts",
-        subtitle: "Show incoming system notifications inside the island",
-        icon: "preferences-system-notifications-symbolic",
-      }),
-    );
+    generalGroup.add(this._switchRow(settings, "intercept-osd", {
+      title: "System Volume / Brightness OSD",
+      subtitle: "Show volume and brightness changes inside the island",
+      icon: "audio-volume-high-symbolic",
+    }));
 
-    const animGroup = new Adw.PreferencesGroup({ title: "Smoothness" });
-    behaviorPage.add(animGroup);
+    generalGroup.add(this._spinRow(settings, "osd-timeout", {
+      title: "OSD Duration (ms)",
+      subtitle: "How long volume and brightness popups stay visible",
+      lower: 500, upper: 10000, step: 250,
+    }));
 
-    animGroup.add(
-      this._spinRow(settings, "animation-duration", {
-        title: "Transition Speed (ms)",
-        subtitle: "How fast the island expands and collapses",
-        icon: "preferences-desktop-animation-symbolic",
-        lower: 50,
-        upper: 1000,
-        step: 10,
-        page: 100,
-      }),
-    );
+    generalGroup.add(this._switchRow(settings, "show-notifications", {
+      title: "Notification Toasts",
+      subtitle: "Show incoming system notifications inside the island",
+      icon: "preferences-system-notifications-symbolic",
+    }));
 
-    // WEATHER
+    const animGroup = new Adw.PreferencesGroup({ title: "Animation" });
+    page.add(animGroup);
+
+    animGroup.add(this._spinRow(settings, "animation-duration", {
+      title: "Transition Speed (ms)",
+      subtitle: "How fast the island expands and collapses",
+      icon: "preferences-desktop-animation-symbolic",
+      lower: 50, upper: 1000, step: 10, page: 100,
+    }));
+
     const weatherGroup = new Adw.PreferencesGroup({
       title: "Weather",
-      description:
-        "Show current conditions alongside the clock in the idle pill",
+      description: "Show current conditions alongside the clock in the idle pill",
     });
-    behaviorPage.add(weatherGroup);
+    page.add(weatherGroup);
 
-    weatherGroup.add(
-      this._switchRow(settings, "show-weather", {
-        title: "Show Weather",
-        subtitle: "Display temperature and condition in the pill view",
-        icon: "weather-clear-symbolic",
-      }),
-    );
+    weatherGroup.add(this._switchRow(settings, "show-weather", {
+      title: "Show Weather",
+      subtitle: "Display temperature and condition in the pill view",
+      icon: "weather-clear-symbolic",
+    }));
 
     const locationRow = new Adw.EntryRow({
       title: "Location",
       show_apply_button: true,
     });
+    settings.bind("weather-location", locationRow, "text", Gio.SettingsBindFlags.DEFAULT);
+    weatherGroup.add(locationRow);
 
-    settings.bind(
-      "weather-location",
-      locationRow,
-      "text",
-      Gio.SettingsBindFlags.DEFAULT,
-    );
+    weatherGroup.add(this._comboRow(settings, "weather-units", {
+      title: "Units",
+      choices: [
+        { label: "Metric (°C)",   value: "metric"   },
+        { label: "Imperial (°F)", value: "imperial" },
+      ],
+    }));
 
-    const locationSubRow = new Adw.ActionRow({
-      subtitle:
-        'City name (e.g. "London") or leave blank for auto-detect by IP',
+    const btGroup = new Adw.PreferencesGroup({ title: "Bluetooth" });
+    page.add(btGroup);
+
+    btGroup.add(this._switchRow(settings, "show-bluetooth", {
+      title: "Show Bluetooth Indicator",
+      subtitle: "Display connected device icon and battery level in the pill",
+      icon: "bluetooth-active-symbolic",
+    }));
+
+    const playerGroup = new Adw.PreferencesGroup({
+      title: "Media Player Filter",
+      description: "Block specific players from triggering the island",
+    });
+    page.add(playerGroup);
+
+    const blocklistRow = new Adw.EntryRow({
+      title: 'Blocked Players (comma-separated, e.g. "firefox, chromium")',
+    });
+    blocklistRow.set_text(settings.get_strv("player-blocklist").join(", "));
+    blocklistRow.connect("changed", () => {
+      const list = blocklistRow
+        .get_text()
+        .split(",")
+        .map((x) => x.trim().toLowerCase())
+        .filter(Boolean);
+      settings.set_strv("player-blocklist", list);
+    });
+    playerGroup.add(blocklistRow);
+
+    return page;
+  }
+
+  // ── Page 3: Scrobbling ────────────────────────────────────────────────────
+
+  _buildScrobblingPage(settings) {
+    const page = new Adw.PreferencesPage({
+      title: "Scrobbling",
+      icon_name: "audio-headphones-symbolic",
     });
 
-    locationSubRow.set_sensitive(false);
+    const lfmGroup = new Adw.PreferencesGroup({
+      title: "Last.fm",
+      description: "Scrobble tracks to your Last.fm profile",
+    });
+    page.add(lfmGroup);
 
-    weatherGroup.add(locationRow);
-    weatherGroup.add(locationSubRow);
+    lfmGroup.add(this._switchRow(settings, "lastfm-enabled", {
+      title: "Enable Last.fm Scrobbling",
+    }));
 
-    // SYSTEM PAGE
-    const systemPage = new Adw.PreferencesPage({
+    for (const [key, title] of [
+      ["lastfm-username",   "Username"   ],
+      ["lastfm-api-key",    "API Key"    ],
+      ["lastfm-api-secret", "API Secret" ],
+      ["lastfm-session-key","Session Key"],
+    ]) {
+      const row = new Adw.EntryRow({ title });
+      settings.bind(key, row, "text", Gio.SettingsBindFlags.DEFAULT);
+      lfmGroup.add(row);
+    }
+
+    lfmGroup.add(new Adw.ActionRow({
+      title: "How to get a session key",
+      subtitle: "Use auth.getMobileSession via the Last.fm API with your API key + secret",
+    }));
+
+    const lbGroup = new Adw.PreferencesGroup({
+      title: "ListenBrainz",
+      description: "Scrobble tracks to your ListenBrainz profile",
+    });
+    page.add(lbGroup);
+
+    lbGroup.add(this._switchRow(settings, "listenbrainz-enabled", {
+      title: "Enable ListenBrainz Scrobbling",
+    }));
+
+    const lbToken = new Adw.EntryRow({ title: "User Token" });
+    settings.bind("listenbrainz-token", lbToken, "text", Gio.SettingsBindFlags.DEFAULT);
+    lbGroup.add(lbToken);
+
+    lbGroup.add(new Adw.ActionRow({
+      title: "Get your token",
+      subtitle: "Visit listenbrainz.org → Profile → API Keys",
+    }));
+
+    return page;
+  }
+
+  // ── Page 5: System ────────────────────────────────────────────────────────
+
+  _buildSystemPage(settings) {
+    const page = new Adw.PreferencesPage({
       title: "System",
       icon_name: "preferences-system-symbolic",
     });
-    window.add(systemPage);
 
     const maintenanceGroup = new Adw.PreferencesGroup({
       title: "Maintenance",
       description: "Manage extension settings",
     });
-
-    systemPage.add(maintenanceGroup);
+    page.add(maintenanceGroup);
 
     const resetRow = new Adw.ActionRow({
       title: "Reset Everything",
       subtitle: "Restore all settings to factory defaults",
     });
-
     const resetBtn = new Gtk.Button({
       label: "Reset",
       valign: Gtk.Align.CENTER,
       css_classes: ["destructive-action"],
     });
-
-    resetBtn.connect("clicked", () =>
-      settings.settings_schema.list_keys().forEach((k) => settings.reset(k)),
-    );
-
+    resetBtn.connect("clicked", () => {
+      settings.settings_schema.list_keys().forEach((k) => settings.reset(k));
+    });
     resetRow.add_suffix(resetBtn);
     maintenanceGroup.add(resetRow);
 
-    // ABOUT PAGE
-    const aboutPage = new Adw.PreferencesPage({
-      title: "About",
-      icon_name: "help-about-symbolic",
-    });
+    const aboutGroup = new Adw.PreferencesGroup({ title: "About" });
+    page.add(aboutGroup);
 
-    window.add(aboutPage);
-
-    const aboutGroup = new Adw.PreferencesGroup();
-    aboutPage.add(aboutGroup);
+    const meta = this.metadata;
+    // Avoid optional-chain (?.) inside new constructors — compute strings first.
+    const metaVersion = meta.version !== undefined ? String(meta.version) : "—";
+    const shellVer = Array.isArray(meta["shell-version"])
+      ? meta["shell-version"].join(", ")
+      : "46+";
 
     const titleRow = new Adw.ActionRow({
       title: "Dynamic Island",
-      subtitle: "v1.2 · GNOME Shell 46+",
+      subtitle: "v" + metaVersion + " · GNOME Shell " + shellVer,
     });
-
     titleRow.add_prefix(
       new Gtk.Image({ icon_name: "audio-x-generic-symbolic", pixel_size: 48 }),
     );
-
     aboutGroup.add(titleRow);
 
-    aboutGroup.add(
-      new Adw.ActionRow({ title: "Author", subtitle: "omarxkhalid" }),
-    );
-    aboutGroup.add(
-      new Adw.ActionRow({ title: "License", subtitle: "GPL-2.0-or-later" }),
-    );
+    aboutGroup.add(new Adw.ActionRow({
+      title: "Author",
+      subtitle: "omarxkhalid",
+    }));
+    aboutGroup.add(new Adw.ActionRow({
+      title: "License",
+      subtitle: "GPL-2.0-or-later",
+    }));
 
     const sourceRow = new Adw.ActionRow({
       title: "Source Code",
       subtitle: "github.com/omarxkhalid/dynamic-island",
       activatable: true,
     });
-
-    sourceRow.add_suffix(
-      new Gtk.Image({ icon_name: "external-link-symbolic" }),
-    );
-
+    sourceRow.add_suffix(new Gtk.Image({ icon_name: "go-next-symbolic" }));
     sourceRow.connect("activated", () =>
-      Gtk.show_uri(window, "https://github.com/omarxkhalid/dynamic-island", 0),
+      Gtk.show_uri(
+        sourceRow.get_root(),
+        "https://github.com/omarxkhalid/dynamic-island",
+        0,
+      ),
     );
-
     aboutGroup.add(sourceRow);
+
+    return page;
   }
 
-  _spinRow(settings, key, opts = {}) {
-    const row = new Adw.SpinRow({
-      title: opts.title ?? key,
-      subtitle: opts.subtitle ?? "",
-      ...(opts.icon ? { icon_name: opts.icon } : {}),
-      digits: opts.digits ?? 0,
-      adjustment: new Gtk.Adjustment({
-        lower: opts.lower ?? 0,
-        upper: opts.upper ?? 100,
-        step_increment: opts.step ?? 1,
-        page_increment: opts.page ?? (opts.step ?? 1) * 10,
-      }),
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Build a SpinRow.
+   * All opts are extracted into local variables before constructing any GObject
+   * so that neither ?. nor ?? appear directly inside a `new` call — GJS does
+   * not allow optional-chain expressions as constructor arguments.
+   */
+  _spinRow(settings, key, opts) {
+    const o = opts || {};
+    const title    = o.title    !== undefined ? o.title    : key;
+    const subtitle = o.subtitle !== undefined ? o.subtitle : "";
+    const digits   = o.digits   !== undefined ? o.digits   : 0;
+    const lower    = o.lower    !== undefined ? o.lower    : 0;
+    const upper    = o.upper    !== undefined ? o.upper    : 100;
+    const step     = o.step     !== undefined ? o.step     : 1;
+    const page     = o.page     !== undefined ? o.page     : step * 10;
+    const icon     = o.icon     !== undefined ? o.icon     : null;
+
+    const adj = new Gtk.Adjustment({
+      lower,
+      upper,
+      step_increment: step,
+      page_increment: page,
     });
 
+    const rowProps = { title, subtitle, digits, adjustment: adj };
+    if (icon) rowProps.icon_name = icon;
+
+    const row = new Adw.SpinRow(rowProps);
     settings.bind(key, row, "value", Gio.SettingsBindFlags.DEFAULT);
     return row;
   }
 
-  _switchRow(settings, key, opts = {}) {
-    const row = new Adw.SwitchRow({
-      title: opts.title ?? key,
-      subtitle: opts.subtitle ?? "",
-      ...(opts.icon ? { icon_name: opts.icon } : {}),
+  _switchRow(settings, key, opts) {
+    const o = opts || {};
+    const title    = o.title    !== undefined ? o.title    : key;
+    const subtitle = o.subtitle !== undefined ? o.subtitle : "";
+    const icon     = o.icon     !== undefined ? o.icon     : null;
+
+    const rowProps = { title, subtitle };
+    if (icon) rowProps.icon_name = icon;
+
+    const row = new Adw.SwitchRow(rowProps);
+    settings.bind(key, row, "active", Gio.SettingsBindFlags.DEFAULT);
+    return row;
+  }
+
+  _comboRow(settings, key, opts) {
+    const o = opts || {};
+    const title   = o.title   !== undefined ? o.title   : key;
+    const choices = o.choices !== undefined ? o.choices : [];
+
+    const model = new Gtk.StringList();
+    const values = choices.map((c) => c.value);
+    for (const { label } of choices) model.append(label);
+
+    const row = new Adw.ComboRow({ title, model });
+
+    const cur = settings.get_string(key);
+    const idx = values.indexOf(cur);
+    if (idx >= 0) row.set_selected(idx);
+
+    row.connect("notify::selected", () => {
+      const sel = row.get_selected();
+      if (sel >= 0 && sel < values.length)
+        settings.set_string(key, values[sel]);
     });
 
-    settings.bind(key, row, "active", Gio.SettingsBindFlags.DEFAULT);
+    settings.connect("changed::" + key, () => {
+      const newIdx = values.indexOf(settings.get_string(key));
+      if (newIdx >= 0 && newIdx !== row.get_selected())
+        row.set_selected(newIdx);
+    });
+
     return row;
   }
 }

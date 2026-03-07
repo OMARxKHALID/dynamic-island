@@ -4,23 +4,23 @@
  * Intercepts GNOME Shell's OSD (volume / brightness popups) and redirects
  * them to the Dynamic Island instead.
  *
- * ⚠ This patches Main.osdWindowManager.show() at runtime. The patch is
- *   carefully designed to fall back to the original implementation for any
- *   icon type we do not handle, and to restore cleanly on disable().
+ * Why we patch Main.osdWindowManager.show():
+ *   GNOME Shell has no public signal or hook for "OSD about to show".  The
+ *   only reliable interception point is the show() method itself.  The patch
+ *   stores the original function and restores it exactly in disable(), so the
+ *   system OSD is fully reinstated when the extension is disabled or removed.
+ *   Any icon type we do not handle falls through to the original implementation
+ *   unchanged, so other extensions that show custom OSD types are unaffected.
  *
- * FIX #2 — Volume Percentage:
- *   GNOME Shell passes level in the range 0.0–1.0 for normal volume and
- *   0.0–1.5 (or slightly beyond) when "Allow Louder Than 100%" is enabled
- *   (over-amplification). The raw value is clamped here before being forwarded
- *   to the island so the displayed percentage never exceeds 100% on systems
- *   without over-amp and never exceeds 150% on Zorin OS 18 / systems that
- *   have it enabled.
+ * Volume clamping:
+ *   GNOME Shell passes level in 0.0–1.0 for normal volume and up to 1.5 when
+ *   "Allow Louder Than 100%" (over-amplification) is active.  The raw value is
+ *   clamped before forwarding so the island never displays more than 150%.
  */
 
 import Gio from "gi://Gio";
 import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
-// Maximum level GNOME passes when over-amplification is active.
 const OVER_AMP_MAX = 1.5;
 
 export class OsdInterceptor {
@@ -49,19 +49,17 @@ export class OsdInterceptor {
         const isBrightness = iconName.includes("brightness");
 
         if ((isVolume || isBrightness) && this._island) {
-          // FIX #2: Clamp level so the island never shows > 150% (over-amp)
-          // or > 100% (normal). maxLevel > 1 signals over-amp is active.
           const effectiveMax =
             maxLevel != null && maxLevel > 1 ? OVER_AMP_MAX : 1.0;
           const clampedLevel = Math.min(level ?? 0, effectiveMax);
           this._island.showOsd(iconName, clampedLevel, effectiveMax);
-          return; // consumed — don't call original
+          return; // consumed — suppress the default popup
         }
       } catch (e) {
         console.error("DynamicIsland: OSD intercept error:", e.message);
       }
 
-      // Fallthrough: let GNOME handle it normally
+      // Fallthrough: let GNOME handle any icon type we don't recognise
       this._originalShow?.(monitorIndex, icon, label, level, maxLevel);
     };
   }
@@ -75,7 +73,7 @@ export class OsdInterceptor {
     this._enabled = false;
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   _resolveIconName(icon) {
     if (!icon) return "";

@@ -1,39 +1,64 @@
 /**
  * extension.js
  *
- * Entry point — lifecycle wiring only. No UI code lives here.
+ * Entry-point — lifecycle wiring only.
+ * All feature logic lives in the src/ sub-modules.
  *
- * Modules managed:
- *   DynamicIsland   — the island actor
- *   MprisWatcher    — D-Bus MPRIS media detection
- *   OsdInterceptor  — replaces GNOME's volume/brightness OSD
- *   Scrobbler       — Last.fm / ListenBrainz scrobbling
- *   WeatherClient   — wttr.in weather widget
- *   BluetoothWatcher— BlueZ connected-device indicator
+ * GNOME Shell 45+ ESM note:
+ *   enable() is called synchronously; the body must not be async or the shell
+ *   considers it complete before any construction happens.  Named imports are
+ *   used so the linker can resolve every export unambiguously.
  */
 
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
 
-import { DynamicIsland } from "./src/island.js";
+import { IslandCore } from "./src/island.js";
 import { MprisWatcher } from "./src/mpris.js";
 import { OsdInterceptor } from "./src/osd.js";
 import { Scrobbler } from "./src/scrobbler.js";
 import { WeatherClient } from "./src/weather.js";
 import { BluetoothWatcher } from "./src/bluetooth.js";
+import { QuickSettingsTile } from "./src/quickToggle.js";
 
 export default class DynamicIslandExtension extends Extension {
   enable() {
     this._settings = this.getSettings();
+    this._islandEnabled = true;
 
-    // ── Island UI ──────────────────────────────────────────────────────────
-    this._island = new DynamicIsland(this._settings);
+    this._startIsland();
+
+    // Quick Settings tile (GNOME 43+)
+    this._quickToggle = new QuickSettingsTile(
+      this._settings,
+      (enabled) => {
+        this._islandEnabled = enabled;
+        if (enabled) this._startIsland();
+        else this._stopIsland();
+      },
+      () => this.openPreferences(),
+    );
+    this._quickToggle.enable();
+  }
+
+  disable() {
+    this._quickToggle?.disable();
+    this._quickToggle = null;
+    this._stopIsland();
+    this._settings = null;
+    this._islandEnabled = true;
+  }
+
+  // ── Private ───────────────────────────────────────────────────────────────
+
+  _startIsland() {
+    if (this._island) return;
+
+    // Island UI
+    this._island = new IslandCore(this._settings);
     this._island.init();
 
-    // ── MPRIS watcher ──────────────────────────────────────────────────────
+    // MPRIS watcher
     this._mpris = new MprisWatcher(this._settings);
-
-    // Track last known status/track-id so we can tell the scrobbler about
-    // play / pause / resume / new-track transitions.
     this._lastMprisStatus = null;
     this._lastMprisTrackId = null;
 
@@ -50,25 +75,28 @@ export default class DynamicIslandExtension extends Extension {
       this._lastMprisStatus = null;
       this._lastMprisTrackId = null;
     });
+    // When the player scrubs externally (user drags in Spotify/VLC/etc),
+    // MPRIS fires a Seeked signal with the new absolute position in µs.
+    // Forward it straight to the seek tracker so it re-anchors immediately.
+    this._mprisSeekId = this._mpris.connect("player-seeked", (_w, posMicros) =>
+      this._island.onPlayerSeeked(posMicros),
+    );
     this._mpris.start();
 
-    // ── OSD intercept ──────────────────────────────────────────────────────
+    // OSD intercept
     this._osd = null;
     if (this._settings.get_boolean("intercept-osd")) this._enableOsd();
-
     this._interceptId = this._settings.connect("changed::intercept-osd", () => {
       if (this._settings.get_boolean("intercept-osd")) this._enableOsd();
       else this._disableOsd();
     });
 
-    // ── Scrobbler ──────────────────────────────────────────────────────────
+    // Scrobbler
     this._scrobbler = new Scrobbler(this._settings);
 
-    // ── Weather ────────────────────────────────────────────────────────────
+    // Weather
     this._weather = new WeatherClient(this._settings);
     this._weather.start((data) => this._island.updateWeather(data));
-
-    // Refresh when the user changes location or units in prefs
     this._weatherLocId = this._settings.connect(
       "changed::weather-location",
       () => this._weather.refresh(),
@@ -78,26 +106,23 @@ export default class DynamicIslandExtension extends Extension {
       () => this._weather.refresh(),
     );
 
-    // ── Bluetooth ──────────────────────────────────────────────────────────
+    // Bluetooth
     this._bluetooth = new BluetoothWatcher(this._settings);
     this._bluetooth.start((devices) => this._island.updateBluetooth(devices));
   }
 
-  disable() {
-    // Settings listeners
+  _stopIsland() {
     for (const id of [
       this._interceptId,
       this._weatherLocId,
       this._weatherUnitsId,
     ]) {
-      if (id) this._settings.disconnect(id);
+      if (id) this._settings?.disconnect(id);
     }
     this._interceptId = this._weatherLocId = this._weatherUnitsId = null;
 
-    // OSD
     this._disableOsd();
 
-    // MPRIS
     if (this._mpris) {
       if (this._mprisChangedId) {
         this._mpris.disconnect(this._mprisChangedId);
@@ -107,29 +132,26 @@ export default class DynamicIslandExtension extends Extension {
         this._mpris.disconnect(this._mprisClosedId);
         this._mprisClosedId = null;
       }
+      if (this._mprisSeekId) {
+        this._mpris.disconnect(this._mprisSeekId);
+        this._mprisSeekId = null;
+      }
       this._mpris.destroy();
       this._mpris = null;
     }
 
-    // Island (after MPRIS so no in-flight callbacks hit a dead actor)
     if (this._island) {
       this._island.destroy();
       this._island = null;
     }
-
-    // Scrobbler
     if (this._scrobbler) {
       this._scrobbler.destroy();
       this._scrobbler = null;
     }
-
-    // Weather
     if (this._weather) {
       this._weather.destroy();
       this._weather = null;
     }
-
-    // Bluetooth
     if (this._bluetooth) {
       this._bluetooth.destroy();
       this._bluetooth = null;
@@ -137,10 +159,7 @@ export default class DynamicIslandExtension extends Extension {
 
     this._lastMprisStatus = null;
     this._lastMprisTrackId = null;
-    this._settings = null;
   }
-
-  // ── Private ───────────────────────────────────────────────────────────────
 
   _enableOsd() {
     if (this._osd || !this._island) return;
@@ -155,12 +174,6 @@ export default class DynamicIslandExtension extends Extension {
     }
   }
 
-  /**
-   * Translates MPRIS property-change events into the Scrobbler's API:
-   *   nowPlaying() — new track started
-   *   paused()     — playback paused/stopped
-   *   resumed()    — same track resumed
-   */
   _handleScrobbleState(proxy) {
     const status =
       proxy.get_cached_property("PlaybackStatus")?.unpack() ?? "Stopped";
@@ -168,31 +181,20 @@ export default class DynamicIslandExtension extends Extension {
     const trackId = meta["mpris:trackid"]?.unpack() ?? null;
 
     if (status === "Playing") {
-      const isNewTrack = trackId !== this._lastMprisTrackId;
-
-      if (isNewTrack) {
-        // Extract track metadata for the scrobbler
+      if (trackId !== this._lastMprisTrackId) {
         const title = meta["xesam:title"]?.unpack() ?? "";
         const rawArtists = meta["xesam:artist"]?.deepUnpack() ?? [];
         const artist = Array.isArray(rawArtists)
           ? (rawArtists[0] ?? "")
           : String(rawArtists);
         const album = meta["xesam:album"]?.unpack() ?? "";
-        const durationµs = Number(meta["mpris:length"]?.unpack() ?? 0);
-
-        this._scrobbler?.nowPlaying(
-          title,
-          artist,
-          album,
-          durationµs / 1_000_000,
-        );
+        const durµs = Number(meta["mpris:length"]?.unpack() ?? 0);
+        this._scrobbler?.nowPlaying(title, artist, album, durµs / 1_000_000);
         this._lastMprisTrackId = trackId;
       } else if (this._lastMprisStatus !== "Playing") {
-        // Same track, resumed from pause
         this._scrobbler?.resumed();
       }
     } else if (this._lastMprisStatus === "Playing") {
-      // Transitioned from Playing → Paused/Stopped
       this._scrobbler?.paused();
     }
 

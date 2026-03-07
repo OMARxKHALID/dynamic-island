@@ -2,18 +2,7 @@
  * island.js
  *
  * Core Dynamic Island actor.
- *
  * States: Pill (clock) → Compact (waveform) → Expanded (player) → OSD → Notif
- *
- * Fixes applied:
- *  #1 — Art Size Setting:    art-compact-size / art-expanded-size from GSettings
- *  #2 — Volume Percentage:   capped at 100% (normal) or 150% (over-amp)
- *  #3 — Player Visibility:   island only appears when PlaybackStatus = "Playing"
- *  #4 — Seek bar:            track-ID reset, local interpolation, longer D-Bus timeout
- *
- * New in this revision:
- *  • show-notifications setting — when false, _showNotification() is a no-op
- *  • Settings watcher for show-notifications so toggling in prefs is instant
  */
 
 import GLib from "gi://GLib";
@@ -41,7 +30,6 @@ import {
   OSD_HIDE_MS,
   NOTIF_HIDE_MS,
   WAVEFORM_MS,
-  SEEK_TICK_S,
   State,
   ART_COMPACT,
   ART_EXPANDED,
@@ -50,12 +38,11 @@ import {
   HOVER_DEBOUNCE,
 } from "./constants.js";
 
-const MPRIS_PLAYER_IFACE = "org.mpris.MediaPlayer2.Player";
+import { SeekTracker } from "./seekTracker.js";
+
 const OVER_AMP_MAX = 1.5;
 
-export class DynamicIsland {
-  // ── Constructor ──────────────────────────────────────────────────────────
-
+export class IslandCore {
   constructor(settings) {
     this._settings = settings;
 
@@ -67,30 +54,31 @@ export class DynamicIsland {
     this._mediaProxy = null;
     this._playing = false;
     this._trackLength = 0;
-
-    // FIX #4: track-ID change detection and local seek interpolation
     this._lastTrackId = null;
-    this._seekBasePosition = 0; // µs — last known authoritative position
-    this._seekBaseMonoTime = 0; // GLib.get_monotonic_time() at that moment
-    this._seekDragging = false; // true while user is dragging the seek bar
 
-    // Cached data from external modules — reapplied after _refreshUI() rebuilds views
-    this._lastWeatherData = null; // { temp, icon }
-    this._lastBtDevices = []; // array of connected device descriptors
+    // Cached data — reapplied after _refreshUI() rebuilds views
+    this._lastWeatherData = null;
+    this._lastBtDevices = [];
+
+    // Pill-view separator (null until first _buildPillView)
+    this._pillSep = null;
 
     // OSD
-    this._osdState = null; // { icon, level, max }
+    this._osdState = null;
+    this._pendingBrightnessFill = null;
 
     // Dynamic art colour
     this._dominantColor = null;
 
-    // GLib source IDs — every one must be removed in destroy()
+    // GLib source IDs
     this._waveformSrc = null;
-    this._seekSrc = null;
     this._osdHideSrc = null;
     this._notifHideSrc = null;
     this._clockSrc = null;
     this._collapseTimeoutId = null;
+    this._autoHideSrc = null;
+    // Idle source for deferred seek-bar render after expand (layout must settle first)
+    this._renderIdleSrc = null;
 
     // Async art loading
     this._artCancellable = null;
@@ -98,7 +86,7 @@ export class DynamicIsland {
     // Signal IDs
     this._hoverId = 0;
     this._monitorsId = 0;
-    this._fullscreenId = 0; // global.display in-fullscreen-changed
+    this._fullscreenId = 0;
     this._settingsIds = [];
 
     // Notification watcher
@@ -110,15 +98,17 @@ export class DynamicIsland {
     this._scale = 1.0;
     this._animDur = 280;
 
-    // Pending brightness fill applied after OSD transition completes
-    this._pendingBrightnessFill = undefined;
+    // Seek tracker (created in init())
+    this._seekTracker = null;
   }
 
-  // ── Public entry point ───────────────────────────────────────────────────
+  // ── Public entry point ────────────────────────────────────────────────────
 
   init() {
     this._scale = this._settings.get_double("notch-scale") || 1.0;
     this._animDur = this._settings.get_int("animation-duration") || 280;
+
+    this._seekTracker = new SeekTracker(this._settings);
 
     this._buildWidget();
     this._addToStage();
@@ -132,7 +122,7 @@ export class DynamicIsland {
     }
   }
 
-  // ── Settings watchers ────────────────────────────────────────────────────
+  // ── Settings watchers ─────────────────────────────────────────────────────
 
   _connectSettings() {
     const watch = (key, fn) =>
@@ -159,16 +149,18 @@ export class DynamicIsland {
     });
 
     const onSizeChange = () => this._transitionTo(this._state);
-    watch("pill-width", onSizeChange);
-    watch("pill-height", onSizeChange);
-    watch("compact-width", onSizeChange);
-    watch("compact-height", onSizeChange);
-    watch("expanded-width", onSizeChange);
-    watch("expanded-height", onSizeChange);
-    watch("osd-width", onSizeChange);
-    watch("osd-height", onSizeChange);
+    for (const key of [
+      "pill-width",
+      "pill-height",
+      "compact-width",
+      "compact-height",
+      "expanded-width",
+      "expanded-height",
+      "osd-width",
+      "osd-height",
+    ])
+      watch(key, onSizeChange);
 
-    // FIX #1: art size changes require a full rebuild
     const onArtSizeChange = () => this._refreshUI();
     watch("art-expanded-size", onArtSizeChange);
     watch("art-compact-size", onArtSizeChange);
@@ -176,8 +168,6 @@ export class DynamicIsland {
     watch("animation-duration", () => {
       this._animDur = this._settings.get_int("animation-duration") || 280;
     });
-
-    watch("osd-timeout", () => {});
 
     watch("show-seek-bar", () => {
       const show = this._settings.get_boolean("show-seek-bar");
@@ -205,6 +195,7 @@ export class DynamicIsland {
           onComplete: () => this._actor?.hide(),
         });
       } else {
+        this._cancelAutoHide();
         if (!this._isFullscreen()) {
           this._actor.show();
           this._actor.opacity = 255;
@@ -213,28 +204,28 @@ export class DynamicIsland {
       }
     });
 
-    // NEW: toggling show-notifications at runtime — if disabled while a toast
-    // is active, dismiss it immediately and restore the previous state.
+    watch("auto-hide-delay", () => this._resetAutoHideTimer());
+
     watch("show-notifications", () => {
-      if (!this._settings.get_boolean("show-notifications")) {
-        if (this._state === State.NOTIF) {
-          if (this._notifHideSrc) {
-            GLib.Source.remove(this._notifHideSrc);
-            this._notifHideSrc = null;
-          }
-          this._dismissNotification();
+      if (
+        !this._settings.get_boolean("show-notifications") &&
+        this._state === State.NOTIF
+      ) {
+        if (this._notifHideSrc) {
+          GLib.Source.remove(this._notifHideSrc);
+          this._notifHideSrc = null;
         }
+        this._dismissNotification();
       }
     });
 
-    // Weather widget visibility
     watch("show-weather", () => {
       if (this._weatherWidget)
         this._weatherWidget.visible =
-          this._settings.get_boolean("show-weather");
+          this._settings.get_boolean("show-weather") &&
+          !!this._lastWeatherData?.temp;
     });
 
-    // Bluetooth indicator visibility (re-evaluate against last known device list)
     watch("show-bluetooth", () => {
       this.updateBluetooth(this._lastBtDevices ?? []);
     });
@@ -293,16 +284,19 @@ export class DynamicIsland {
     this._osdView.hide();
     this._notifView.hide();
 
+    // Hover
     this._hoverId = this._actor.connect("notify::hover", () => {
       if (this._state === State.OSD || this._state === State.NOTIF) return;
 
       if (this._actor.hover) {
+        this._cancelAutoHide();
         if (this._collapseTimeoutId) {
           GLib.Source.remove(this._collapseTimeoutId);
           this._collapseTimeoutId = null;
         }
         this._onHoverEnter();
       } else {
+        this._resetAutoHideTimer();
         if (this._collapseTimeoutId) return;
         this._collapseTimeoutId = GLib.timeout_add(
           GLib.PRIORITY_DEFAULT,
@@ -322,24 +316,22 @@ export class DynamicIsland {
 
   _buildPillView() {
     const scale = this._scale;
-
-    // Root box: left indicators → flex spacer → clock
     const box = new St.BoxLayout({
       style_class: "di-pill-view",
       x_expand: true,
       y_expand: true,
       x_align: Clutter.ActorAlign.FILL,
       y_align: Clutter.ActorAlign.CENTER,
-      style: `padding: 0 ${Math.floor(10 * scale)}px; spacing: ${Math.floor(6 * scale)}px;`,
+      style: `spacing: ${Math.floor(6 * scale)}px;`,
     });
 
-    // ── Bluetooth indicator (hidden until a device connects) ───────────────
+    // Bluetooth indicator
     this._btIndicator = new St.BoxLayout({
       style_class: "di-bt-indicator",
       vertical: false,
       y_align: Clutter.ActorAlign.CENTER,
+      visible: false,
       style: `spacing: ${Math.floor(3 * scale)}px;`,
-      visible: false, // shown by updateBluetooth()
     });
     this._btDeviceIcon = new St.Icon({
       style_class: "di-bt-icon",
@@ -351,56 +343,62 @@ export class DynamicIsland {
       style_class: "di-bt-label",
       text: "",
       y_align: Clutter.ActorAlign.CENTER,
-      style: `font-size: ${Math.floor(10 * scale)}px; color: rgba(255,255,255,0.55);`,
     });
     this._btIndicator.add_child(this._btDeviceIcon);
     this._btIndicator.add_child(this._btBatteryLabel);
 
-    // ── Weather widget (hidden until show-weather is enabled) ──────────────
+    // Weather widget
     this._weatherWidget = new St.BoxLayout({
       style_class: "di-weather",
       vertical: false,
       y_align: Clutter.ActorAlign.CENTER,
+      visible:
+        this._settings.get_boolean("show-weather") &&
+        !!this._lastWeatherData?.temp,
       style: `spacing: ${Math.floor(3 * scale)}px;`,
-      visible: this._settings.get_boolean("show-weather"),
     });
     this._weatherIconLabel = new St.Label({
       style_class: "di-weather-icon",
       text: "",
       y_align: Clutter.ActorAlign.CENTER,
-      style: `font-size: ${Math.floor(13 * scale)}px;`,
     });
     this._weatherTempLabel = new St.Label({
       style_class: "di-weather-temp",
       text: "",
       y_align: Clutter.ActorAlign.CENTER,
-      style: `font-size: ${Math.floor(11 * scale)}px; color: rgba(255,255,255,0.65);`,
     });
     this._weatherWidget.add_child(this._weatherIconLabel);
     this._weatherWidget.add_child(this._weatherTempLabel);
 
-    // ── Flex spacer (pushes clock to the right) ────────────────────────────
     const spacer = new St.Widget({ x_expand: true });
 
-    // ── Clock ──────────────────────────────────────────────────────────────
+    // Subtle 1 px vertical separator between the info group and the clock.
+    // Visible only when at least one info widget (BT / weather) is shown.
+    this._pillSep = new St.Widget({
+      style_class: "di-pill-sep",
+      width: 1,
+      height: Math.floor(14 * scale),
+      y_align: Clutter.ActorAlign.CENTER,
+      visible: false,
+    });
+
     this._clockLabel = new St.Label({
       style_class: "di-clock-label",
       text: "--:--",
       y_align: Clutter.ActorAlign.CENTER,
-      style: `font-size: ${Math.floor(13 * scale)}px;`,
     });
     this._clockLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
 
     box.add_child(this._btIndicator);
     box.add_child(this._weatherWidget);
     box.add_child(spacer);
+    box.add_child(this._pillSep);
     box.add_child(this._clockLabel);
     return box;
   }
 
   _buildCompactView() {
     const scale = this._scale;
-    // FIX #1: art size from settings
     const artSize = Math.floor(
       (this._settings.get_int("art-compact-size") || ART_COMPACT) * scale,
     );
@@ -456,7 +454,7 @@ export class DynamicIsland {
     this._waveformBars = [];
     for (let i = 0; i < WAVEFORM_BARS; i++) {
       const bar = new St.Widget({
-        style_class: `di-waveform-bar di-bar-${i}`,
+        style_class: "di-waveform-bar",
         width: Math.floor(3 * scale),
         height: Math.floor(2 * scale),
         y_align: Clutter.ActorAlign.END,
@@ -482,7 +480,6 @@ export class DynamicIsland {
 
   _buildExpandedView() {
     const scale = this._scale;
-    // FIX #1: art size from settings
     const artSize = Math.floor(
       (this._settings.get_int("art-expanded-size") || ART_EXPANDED) * scale,
     );
@@ -520,6 +517,7 @@ export class DynamicIsland {
       x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
     });
+
     this._albumArtBox.add_child(this._albumArtActor);
     this._albumArtBox.add_child(this._albumFallbackIcon);
 
@@ -532,80 +530,65 @@ export class DynamicIsland {
       style: `spacing: ${Math.floor(4 * scale)}px;`,
     });
 
-    this._titleLabel = new St.Label({
-      style_class: "di-title",
-      text: "",
-      style: `font-size: ${Math.floor(14 * scale)}px; font-weight: bold;`,
-    });
+    this._titleLabel = new St.Label({ style_class: "di-title", text: "" });
     this._titleLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
     this._titleLabel.visible = false;
 
-    this._artistLabel = new St.Label({
-      style_class: "di-artist",
-      text: "",
-      style: `font-size: ${Math.floor(10 * scale)}px;`,
-    });
+    this._artistLabel = new St.Label({ style_class: "di-artist", text: "" });
     this._artistLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
     this._artistLabel.visible = false;
 
-    // Seek bar — FIX #4: reactive with improved click handler
-    this._seekBg = new St.Widget({
-      style_class: "di-seek-bg",
-      height: Math.floor(4 * scale),
+    // Seek bar — 20 px transparent hit-area around a 6 px visual track
+    const barH = Math.floor(6 * scale);
+    const hitH = Math.floor(20 * scale);
+
+    this._seekHit = new St.Widget({
+      style_class: "di-seek-hit",
+      height: hitH,
       x_expand: true,
       reactive: true,
       track_hover: true,
+      layout_manager: new Clutter.BinLayout(),
+    });
+    this._seekBg = new St.Widget({
+      style_class: "di-seek-bg",
+      height: barH,
+      x_expand: true,
+      x_align: Clutter.ActorAlign.FILL,
+      y_align: Clutter.ActorAlign.CENTER,
     });
     this._seekFill = new St.Widget({
       style_class: "di-seek-fill",
-      height: Math.floor(4 * scale),
+      height: barH,
       width: 0,
+      y_align: Clutter.ActorAlign.CENTER,
     });
     this._seekBg.add_child(this._seekFill);
-
-    // Drag-to-seek: press starts drag, motion updates visuals, release commits D-Bus call
-    this._seekDragging = false;
-    this._seekBg.connect("button-press-event", (actor, event) => {
-      if (event.get_button() !== 1) return Clutter.EVENT_PROPAGATE;
-      this._seekDragging = true;
-      this._updateSeekFromPointer(actor, event, false); // preview position
-      return Clutter.EVENT_STOP;
-    });
-    this._seekBg.connect("motion-event", (actor, event) => {
-      if (!this._seekDragging) return Clutter.EVENT_PROPAGATE;
-      this._updateSeekFromPointer(actor, event, false); // live scrub preview
-      return Clutter.EVENT_STOP;
-    });
-    this._seekBg.connect("button-release-event", (actor, event) => {
-      if (!this._seekDragging || event.get_button() !== 1)
-        return Clutter.EVENT_PROPAGATE;
-      this._seekDragging = false;
-      this._updateSeekFromPointer(actor, event, true); // commit via D-Bus
-      return Clutter.EVENT_STOP;
-    });
+    this._seekHit.add_child(this._seekBg);
 
     this._timeRow = new St.BoxLayout({
       style_class: "di-time-row",
       vertical: false,
       x_expand: true,
     });
-    this._posLabel = new St.Label({
-      style_class: "di-time",
-      text: "0:00",
-      style: `font-size: ${Math.floor(11 * scale)}px;`,
-    });
-    this._durLabel = new St.Label({
-      style_class: "di-time",
-      text: "0:00",
-      style: `font-size: ${Math.floor(11 * scale)}px;`,
-    });
+    this._posLabel = new St.Label({ style_class: "di-time", text: "0:00" });
+    this._durLabel = new St.Label({ style_class: "di-time", text: "0:00" });
     this._timeRow.add_child(this._posLabel);
     this._timeRow.add_child(new St.Widget({ x_expand: true }));
     this._timeRow.add_child(this._durLabel);
 
     const showSeek = this._settings.get_boolean("show-seek-bar");
-    this._seekBg.visible = showSeek;
+    this._seekHit.visible = showSeek;
     this._timeRow.visible = showSeek;
+
+    // Wire seek widgets into the tracker
+    this._seekTracker.setWidgets(
+      this._seekHit,
+      this._seekBg,
+      this._seekFill,
+      this._posLabel,
+      this._durLabel,
+    );
 
     // Playback controls
     const controls = new St.BoxLayout({
@@ -637,7 +620,7 @@ export class DynamicIsland {
     rightCol.add_child(this._titleLabel);
     rightCol.add_child(this._artistLabel);
     rightCol.add_child(new St.Widget({ y_expand: true }));
-    rightCol.add_child(this._seekBg);
+    rightCol.add_child(this._seekHit);
     rightCol.add_child(this._timeRow);
     rightCol.add_child(controls);
 
@@ -671,7 +654,6 @@ export class DynamicIsland {
       text: "",
       x_expand: true,
       x_align: Clutter.ActorAlign.END,
-      style: `font-size: ${Math.floor(14 * scale)}px;`,
     });
     topRow.add_child(this._osdIcon);
     topRow.add_child(this._osdValueLabel);
@@ -739,21 +721,18 @@ export class DynamicIsland {
     this._notifAppLabel = new St.Label({
       style_class: "di-notif-app",
       text: "",
-      style: `font-size: ${Math.floor(9 * scale)}px; color: rgba(255,255,255,0.45);`,
     });
     this._notifAppLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
     this._notifTitleLabel = new St.Label({
       style_class: "di-notif-title",
       text: "",
-      style: `font-size: ${Math.floor(13 * scale)}px; font-weight: bold; color: #ffffff;`,
     });
     this._notifTitleLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
     this._notifBodyLabel = new St.Label({
       style_class: "di-notif-body",
       text: "",
-      style: `font-size: ${Math.floor(11 * scale)}px; color: rgba(255,255,255,0.55);`,
     });
     this._notifBodyLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
@@ -786,7 +765,7 @@ export class DynamicIsland {
     return btn;
   }
 
-  // ── Stage integration ────────────────────────────────────────────────────
+  // ── Stage integration ─────────────────────────────────────────────────────
 
   _addToStage() {
     Main.layoutManager.addChrome(this._actor, {
@@ -797,33 +776,20 @@ export class DynamicIsland {
     this._monitorsId = Main.layoutManager.connect("monitors-changed", () =>
       this._repositionForSize(this._actor.width),
     );
-
-    // Hide when any window goes fullscreen on the primary monitor;
-    // restore when it leaves fullscreen.
     this._fullscreenId = global.display.connect("in-fullscreen-changed", () =>
       this._onFullscreenChanged(),
     );
   }
 
-  /**
-   * Called whenever a window enters or exits fullscreen on any monitor.
-   * We hide the island while the primary monitor is covered by a fullscreen
-   * window and restore it when fullscreen ends.
-   */
   _onFullscreenChanged() {
     if (!this._actor) return;
-
     if (this._isFullscreen()) {
-      // Instantly hide — no animation so the user never sees a flash
       this._actor.hide();
     } else {
-      // Leaving fullscreen: restore visibility only if there is something
-      // to show (playing media, OSD, or not in auto-hide pill mode).
       const shouldBeVisible =
         this._playing ||
         this._state === State.OSD ||
         !this._settings.get_boolean("auto-hide");
-
       if (shouldBeVisible) {
         this._actor.show();
         this._actor.opacity = 255;
@@ -831,33 +797,18 @@ export class DynamicIsland {
     }
   }
 
-  /**
-   * Returns true when the primary monitor has an active fullscreen window.
-   * Uses global.display.get_monitor_in_fullscreen() which is the canonical
-   * GNOME Shell API for this check (available since GNOME 3.36).
-   */
   _isFullscreen() {
     try {
-      const primaryIdx = Main.layoutManager.primaryIndex;
-      return global.display.get_monitor_in_fullscreen(primaryIdx);
+      return global.display.get_monitor_in_fullscreen(
+        Main.layoutManager.primaryIndex,
+      );
     } catch (_e) {
       return false;
     }
   }
 
-  /**
-   * Show the actor and fade it in — but only when the primary monitor is
-   * NOT in fullscreen.  Every place that previously called
-   * this._actor.show() + ease({opacity:255}) now goes through here so
-   * fullscreen suppression is enforced from a single point.
-   *
-   * @param {number} [duration=180] - fade-in duration in milliseconds.
-   *   Pass 0 for an instant show (e.g. after leaving fullscreen).
-   */
   _showActor(duration = 180) {
-    if (!this._actor) return;
-    if (this._isFullscreen()) return; // stay hidden while fullscreen
-
+    if (!this._actor || this._isFullscreen()) return;
     if (!this._actor.visible) {
       this._actor.show();
       this._actor.opacity = 0;
@@ -883,14 +834,12 @@ export class DynamicIsland {
     );
   }
 
-  // ── Full UI rebuild (scale / art size changes) ────────────────────────────
+  // ── Full UI rebuild ───────────────────────────────────────────────────────
 
   _refreshUI() {
     const currentState = this._state;
-    this._seekDragging = false; // cancel any in-progress drag
 
     this._stopWaveform();
-    this._stopSeekTracking();
     this._stopClock();
     if (this._osdHideSrc) {
       GLib.Source.remove(this._osdHideSrc);
@@ -900,10 +849,15 @@ export class DynamicIsland {
       GLib.Source.remove(this._notifHideSrc);
       this._notifHideSrc = null;
     }
+
+    // Cancel in-flight art load and null actors BEFORE destroy_all_children()
+    // so stale async callbacks see nulls and bail out safely.
     if (this._artCancellable) {
       this._artCancellable.cancel();
       this._artCancellable = null;
     }
+    this._albumArtActor = null;
+    this._compactArtActor = null;
 
     const scale = this._scale;
     let baseH = this._settings.get_int("pill-height") || PILL_H;
@@ -947,25 +901,17 @@ export class DynamicIsland {
     else if (currentState === State.NOTIF) this._notifView.show();
 
     this._transitionTo(currentState);
-
     this._startClock();
+
     if (this._playing) {
       this._startWaveform();
-      this._startSeekTracking();
+      this._seekTracker.renderNow();
     }
 
-    // Reapply external state that was cached before the rebuild
     if (this._lastWeatherData) this.updateWeather(this._lastWeatherData);
     if (this._lastBtDevices?.length) this.updateBluetooth(this._lastBtDevices);
 
-    if (this._mediaProxy) {
-      const meta =
-        this._mediaProxy.get_cached_property("Metadata")?.deepUnpack() ?? {};
-      const artUrl = meta["mpris:artUrl"]?.unpack() ?? "";
-      if (artUrl && this._settings.get_boolean("show-album-art"))
-        this._loadAlbumArt(artUrl);
-      this.updateMedia(this._mediaProxy);
-    }
+    if (this._mediaProxy) this.updateMedia(this._mediaProxy);
     if (this._osdState)
       this.showOsd(
         this._osdState.icon,
@@ -974,48 +920,39 @@ export class DynamicIsland {
       );
   }
 
-  // ── Notch style ──────────────────────────────────────────────────────────
+  // ── Notch style ───────────────────────────────────────────────────────────
 
   _updateNotchStyle(height, state) {
-    const scale = this._scale;
     const bgOpacity = this._settings.get_double("background-opacity") || 0.84;
-
     let r = 10,
       g = 10,
       b = 10;
 
-    const useDynamic =
-      this._settings.get_boolean("dynamic-art-color") && this._dominantColor;
-
-    if (useDynamic) {
-      r = this._dominantColor.r;
-      g = this._dominantColor.g;
-      b = this._dominantColor.b;
+    if (
+      this._settings.get_boolean("dynamic-art-color") &&
+      this._dominantColor
+    ) {
+      ({ r, g, b } = this._dominantColor);
     } else {
       const bgColor =
         this._settings.get_string("background-color") || "#0a0a0a";
-      try {
-        if (bgColor.startsWith("#") && bgColor.length === 7) {
-          const hex = bgColor.slice(1);
-          r = parseInt(hex.substring(0, 2), 16);
-          g = parseInt(hex.substring(2, 4), 16);
-          b = parseInt(hex.substring(4, 6), 16);
-        }
-      } catch (_e) {
-        console.warn("DynamicIsland: invalid background-color:", bgColor);
+      if (bgColor.startsWith("#") && bgColor.length === 7) {
+        const hex = bgColor.slice(1);
+        r = parseInt(hex.substring(0, 2), 16);
+        g = parseInt(hex.substring(2, 4), 16);
+        b = parseInt(hex.substring(4, 6), 16);
       }
     }
 
     let radius = Math.round(height / 2);
     if (state === State.EXPANDED || state === State.NOTIF)
-      radius = Math.round(44 * scale);
-    else if (state === State.OSD) radius = Math.round(38 * scale);
+      radius = Math.round(44 * this._scale);
+    else if (state === State.OSD) radius = Math.round(38 * this._scale);
 
-    this._actor.set_style(`
-      background-color: rgba(${r}, ${g}, ${b}, ${bgOpacity});
-      background-image: linear-gradient(to bottom, rgba(255,255,255,0.05), rgba(0,0,0,0.1));
-      border-radius: 0 0 ${radius}px ${radius}px;
-    `);
+    this._actor.set_style(
+      `background-color: rgba(${r},${g},${b},${bgOpacity});` +
+        `border-radius: 0 0 ${radius}px ${radius}px;`,
+    );
   }
 
   // ── State transitions ─────────────────────────────────────────────────────
@@ -1044,7 +981,7 @@ export class DynamicIsland {
         targetW = NOTIF_W;
         targetH = NOTIF_H;
         break;
-      default: // PILL
+      default:
         targetW = this._settings.get_int("pill-width") || PILL_W;
         targetH = this._settings.get_int("pill-height") || PILL_H;
     }
@@ -1076,20 +1013,43 @@ export class DynamicIsland {
       mode: Clutter.AnimationMode.EASE_OUT_EXPO,
       onComplete: () => {
         if (!this._actor) return;
+        this._actor.set_size(targetW, targetH);
+        this._actor.set_x(targetX);
+
         if (state === State.PILL) this._pillView.show();
         else if (state === State.COMPACT) this._compactView.show();
         else if (state === State.EXPANDED) {
           this._expandedView.show();
-          this._tickSeek();
+          // Defer renderNow() to the NEXT idle frame so that Clutter has had
+          // time to do a layout pass and _seekBg.get_width() returns the actual
+          // allocated width rather than 0 or a stale preferred-size value.
+          // Without this, the fill is drawn at the wrong proportion the first
+          // time the expanded view opens on each track.
+          if (this._renderIdleSrc) {
+            GLib.Source.remove(this._renderIdleSrc);
+            this._renderIdleSrc = null;
+          }
+          this._renderIdleSrc = GLib.idle_add(
+            GLib.PRIORITY_DEFAULT_IDLE,
+            () => {
+              this._renderIdleSrc = null;
+              if (!this._seekTracker || !this._actor) return GLib.SOURCE_REMOVE;
+              // Re-fetch actual playback position from player, then render
+              this._seekTracker.fetchNow();
+              return GLib.SOURCE_REMOVE;
+            },
+          );
         } else if (state === State.OSD) this._osdView.show();
         else if (state === State.NOTIF) this._notifView.show();
+
+        if (state === State.PILL && !this._playing) this._resetAutoHideTimer();
+
         onComplete?.();
       },
     });
   }
 
   _onHoverEnter() {
-    // FIX #3: only expand when actually playing
     if (this._mediaProxy && this._playing) this._transitionTo(State.EXPANDED);
   }
 
@@ -1097,16 +1057,48 @@ export class DynamicIsland {
     if (this._mediaProxy && this._playing) this._transitionTo(State.COMPACT);
   }
 
-  // ── Media (MPRIS) ────────────────────────────────────────────────────────
+  // ── Smart auto-hide ───────────────────────────────────────────────────────
 
-  /**
-   * FIX #3: Island only becomes visible / transitions to Compact when
-   *   PlaybackStatus is "Playing". Paused/Stopped collapses back to Pill.
-   *
-   * FIX #4: Track-ID comparison resets seek bar immediately on new tracks.
-   */
+  _resetAutoHideTimer() {
+    this._cancelAutoHide();
+    if (!this._settings.get_boolean("auto-hide")) return;
+
+    const delaySecs = this._settings.get_int("auto-hide-delay");
+    if (delaySecs <= 0) return;
+
+    this._autoHideSrc = GLib.timeout_add_seconds(
+      GLib.PRIORITY_DEFAULT,
+      delaySecs,
+      () => {
+        this._autoHideSrc = null;
+        if (this._playing || this._state === State.OSD || this._actor?.hover)
+          return GLib.SOURCE_REMOVE;
+        this._actor?.ease({
+          opacity: 0,
+          duration: 300,
+          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+          onComplete: () => this._actor?.hide(),
+        });
+        return GLib.SOURCE_REMOVE;
+      },
+    );
+  }
+
+  _cancelAutoHide() {
+    if (this._autoHideSrc) {
+      GLib.Source.remove(this._autoHideSrc);
+      this._autoHideSrc = null;
+    }
+  }
+
+  // ── Media (MPRIS) ─────────────────────────────────────────────────────────
+
   updateMedia(proxy) {
     this._mediaProxy = proxy;
+
+    // FIX: capture playing state BEFORE updating it — used below to decide
+    // whether to call start() (resume) vs doing nothing (still playing).
+    const wasPlaying = this._playing;
 
     const meta = proxy.get_cached_property("Metadata")?.deepUnpack() ?? {};
     const status =
@@ -1117,31 +1109,22 @@ export class DynamicIsland {
       ? (rawArtists[0] ?? "")
       : String(rawArtists);
     const artUrl = meta["mpris:artUrl"]?.unpack() ?? "";
+    const newLength = Number(meta["mpris:length"]?.unpack() ?? 0);
 
-    this._trackLength = Number(meta["mpris:length"]?.unpack() ?? 0);
+    this._trackLength = newLength;
     this._playing = status === "Playing";
 
-    // FIX #4: Detect track changes and reset seek bar immediately
     const currentTrackId = meta["mpris:trackid"]?.unpack() ?? null;
-    if (currentTrackId !== this._lastTrackId) {
-      this._lastTrackId = currentTrackId;
-      this._seekBasePosition = 0;
-      this._seekBaseMonoTime = GLib.get_monotonic_time();
-      if (this._seekFill) this._seekFill.set_width(0);
-      if (this._posLabel) this._posLabel.set_text("0:00");
-      if (this._durLabel)
-        this._durLabel.set_text(
-          this._trackLength > 0 ? this._µsToTime(this._trackLength) : "0:00",
-        );
-    }
+    const trackChanged = currentTrackId !== this._lastTrackId;
+    if (trackChanged) this._lastTrackId = currentTrackId;
 
     this._titleLabel.set_text(title);
     this._titleLabel.visible = title.length > 0;
     this._artistLabel.set_text(artist);
     this._artistLabel.visible = artist.length > 0;
 
-    const pauseIcon = "media-playback-pause-symbolic";
     const playIcon = "media-playback-start-symbolic";
+    const pauseIcon = "media-playback-pause-symbolic";
     this._playPauseBtn
       .get_child()
       .set_icon_name(this._playing ? pauseIcon : playIcon);
@@ -1160,42 +1143,51 @@ export class DynamicIsland {
     else this._clearAlbumArt();
 
     if (this._playing) {
-      this._startSeekTracking();
+      if (trackChanged) {
+        // New track — full position reset
+        this._seekTracker.reset(proxy, newLength);
+      } else if (!wasPlaying) {
+        // Resumed from pause — re-anchor without resetting position to 0
+        this._seekTracker.start(proxy, newLength);
+      }
+      // else: still playing same track — leave tracker alone so the progress
+      // bar does NOT snap back to 0 on every property-changed event (volume,
+      // art updates, CanGoNext flips, etc.)
       this._startWaveform();
+      this._cancelAutoHide();
     } else {
-      this._stopSeekTracking();
+      this._seekTracker.stop();
       this._stopWaveform();
+      this._resetAutoHideTimer();
     }
 
-    // FIX #3 + fullscreen guard: only show island when Playing and not fullscreen
     if (this._playing) {
       this._showActor(180);
       if (this._state === State.PILL || this._state === State.OSD)
         this._transitionTo(State.COMPACT);
     } else {
-      if (this._state === State.COMPACT || this._state === State.EXPANDED) {
-        if (this._settings.get_boolean("auto-hide")) {
-          this._actor.ease({
-            opacity: 0,
-            duration: 250,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            onComplete: () => this._actor?.hide(),
-          });
-        } else {
-          this._transitionTo(State.PILL);
-        }
-      }
+      if (this._state === State.COMPACT || this._state === State.EXPANDED)
+        this._transitionTo(State.PILL);
     }
   }
 
+  /**
+   * Called when the MPRIS player fires the Seeked signal — e.g. the user
+   * scrubs in Spotify/VLC, or another app seeks programmatically.
+   * Re-anchors the seek tracker immediately so the island bar matches.
+   * @param {number} posMicros  New absolute position in microseconds.
+   */
+  onPlayerSeeked(posMicros) {
+    this._seekTracker?.seekedTo(posMicros);
+  }
+
   clearMedia() {
-    this._mediaProxy = null;
     this._playing = false;
     this._dominantColor = null;
     this._lastTrackId = null;
-    this._seekBasePosition = 0;
-    this._seekBaseMonoTime = 0;
-    this._stopSeekTracking();
+    this._trackLength = 0;
+
+    this._seekTracker.stop();
     this._stopWaveform();
     this._clearAlbumArt();
 
@@ -1203,9 +1195,6 @@ export class DynamicIsland {
     if (this._titleLabel) this._titleLabel.visible = false;
     this._artistLabel?.set_text("");
     if (this._artistLabel) this._artistLabel.visible = false;
-    this._seekFill?.set_width(0);
-    this._posLabel?.set_text("0:00");
-    this._durLabel?.set_text("0:00");
     if (this._prevBtn) {
       this._prevBtn.reactive = true;
       this._prevBtn.opacity = 255;
@@ -1215,25 +1204,13 @@ export class DynamicIsland {
       this._nextBtn.opacity = 255;
     }
 
-    if (this._settings.get_boolean("auto-hide")) {
-      this._actor?.ease({
-        opacity: 0,
-        duration: 250,
-        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-        onComplete: () => this._actor?.hide(),
-      });
-    } else {
-      this._actor?.show();
-      this._transitionTo(State.PILL);
-    }
+    this._actor?.show();
+    this._actor.opacity = 255;
+    this._transitionTo(State.PILL);
   }
 
-  // ── Weather display ───────────────────────────────────────────────────────
+  // ── Weather ───────────────────────────────────────────────────────────────
 
-  /**
-   * Called by WeatherClient whenever fresh data arrives.
-   * @param {{ temp: string, icon: string }} data
-   */
   updateWeather(data) {
     this._lastWeatherData = data;
     if (!this._weatherWidget) return;
@@ -1243,40 +1220,53 @@ export class DynamicIsland {
     }
     this._weatherWidget.visible =
       this._settings.get_boolean("show-weather") && !!data?.temp;
+    this._updatePillSep();
   }
 
-  // ── Bluetooth display ─────────────────────────────────────────────────────
+  /** Toggle the pill separator based on whether any left-side widget is visible. */
+  _updatePillSep() {
+    if (!this._pillSep) return;
+    const btVis = this._btIndicator?.visible ?? false;
+    const wxVis = this._weatherWidget?.visible ?? false;
+    this._pillSep.visible = btVis || wxVis;
+  }
 
-  /**
-   * Called by BluetoothWatcher whenever connected devices change.
-   * @param {Array<{ name: string, icon: string, battery: number|null }>} devices
-   */
+  // ── Bluetooth ─────────────────────────────────────────────────────────────
+
   updateBluetooth(devices) {
     this._lastBtDevices = devices;
-    if (!this._btIndicator) return;
 
     const show = this._settings.get_boolean("show-bluetooth");
     const hasConn = devices.length > 0;
-    this._btIndicator.visible = show && hasConn;
-    if (!hasConn) return;
 
-    const primary = devices[0];
-    const iconMap = {
-      "audio-headset": "audio-headset-symbolic",
-      "audio-headphones": "audio-headphones-symbolic",
-      phone: "phone-symbolic",
-      computer: "computer-symbolic",
-      "input-gaming": "input-gaming-symbolic",
-      "input-keyboard": "input-keyboard-symbolic",
-      "input-mouse": "input-mouse-symbolic",
-    };
-    this._btDeviceIcon?.set_icon_name(
-      iconMap[primary.icon] ?? "bluetooth-active-symbolic",
-    );
-    if (devices.length > 1) this._btBatteryLabel?.set_text(`${devices.length}`);
-    else if (primary.battery !== null && primary.battery !== undefined)
-      this._btBatteryLabel?.set_text(`${primary.battery}%`);
-    else this._btBatteryLabel?.set_text("");
+    if (this._btIndicator) this._btIndicator.visible = show && hasConn;
+
+    // Update pill label
+    if (hasConn) {
+      const primary = devices[0];
+      const iconMap = {
+        "audio-headset": "audio-headset-symbolic",
+        "audio-headphones": "audio-headphones-symbolic",
+        phone: "phone-symbolic",
+        computer: "computer-symbolic",
+        "input-gaming": "input-gaming-symbolic",
+        "input-keyboard": "input-keyboard-symbolic",
+        "input-mouse": "input-mouse-symbolic",
+      };
+      this._btDeviceIcon?.set_icon_name(
+        iconMap[primary.icon] ?? "bluetooth-active-symbolic",
+      );
+
+      let labelText = "";
+      if (devices.length > 1) labelText = `${devices.length}×`;
+      else if (primary.battery !== null && primary.battery !== undefined)
+        labelText = `${primary.battery}%`;
+
+      this._btBatteryLabel?.set_text(labelText);
+    }
+
+    // Update pill separator visibility
+    this._updatePillSep();
   }
 
   // ── Playback controls ─────────────────────────────────────────────────────
@@ -1301,87 +1291,24 @@ export class DynamicIsland {
     );
   }
 
-  // ── Seek interaction (click + drag) — FIX #4 ────────────────────────────
-
-  /**
-   * Unified seek handler for both click and drag.
-   *
-   * @param {Clutter.Actor} actor  — the seek bar background widget
-   * @param {Clutter.Event} event  — the input event
-   * @param {boolean}       commit — false = update visuals only (drag preview);
-   *                                 true  = send SetPosition D-Bus call (release)
-   */
-  _updateSeekFromPointer(actor, event, commit) {
-    if (!this._mediaProxy || this._trackLength <= 0)
-      return Clutter.EVENT_PROPAGATE;
-    const canSeek =
-      this._mediaProxy.get_cached_property("CanSeek")?.unpack() ?? true;
-    if (!canSeek) return Clutter.EVENT_PROPAGATE;
-
-    const [px] = event.get_coords();
-    const [ax] = actor.get_transformed_position();
-    const aw = actor.get_width();
-    if (aw <= 0) return Clutter.EVENT_PROPAGATE;
-
-    const fraction = Math.max(0, Math.min((px - ax) / aw, 1));
-    const targetµs = Math.round(fraction * this._trackLength);
-
-    // Always update visuals immediately (smooth scrub feedback)
-    if (this._seekFill) this._seekFill.set_width(Math.floor(aw * fraction));
-    if (this._posLabel) this._posLabel.set_text(this._µsToTime(targetµs));
-
-    if (!commit) return Clutter.EVENT_STOP;
-
-    // Commit: update local baseline so interpolation continues from new pos
-    this._seekBasePosition = targetµs;
-    this._seekBaseMonoTime = GLib.get_monotonic_time();
-
-    const meta =
-      this._mediaProxy.get_cached_property("Metadata")?.deepUnpack() ?? {};
-    const trackId =
-      meta["mpris:trackid"]?.unpack() ??
-      "/org/mpris/MediaPlayer2/TrackList/NoTrack";
-    try {
-      this._mediaProxy.call(
-        "SetPosition",
-        new GLib.Variant("(ox)", [trackId, targetµs]),
-        Gio.DBusCallFlags.NONE,
-        -1,
-        null,
-        (proxy, res) => {
-          try {
-            proxy.call_finish(res);
-          } catch (_e) {}
-        },
-      );
-    } catch (e) {
-      console.warn("DynamicIsland: SetPosition failed:", e.message);
-    }
-
-    return Clutter.EVENT_STOP;
-  }
-
-  // ── OSD — FIX #2 ────────────────────────────────────────────────────────
+  // ── OSD ───────────────────────────────────────────────────────────────────
 
   showOsd(iconName, level, maxLevel) {
     if (!this._actor) return;
 
     const scale = this._scale;
     const isVolume = iconName.startsWith("audio-volume");
-    const isBrightness = iconName.includes("brightness");
-
+    const isBright = iconName.includes("brightness");
     const isOverAmp = maxLevel != null && maxLevel > 1.0;
     const ceiling = isOverAmp ? OVER_AMP_MAX : 1.0;
-    const clampedLevel = Math.min(level ?? 0, ceiling);
+    const clamped = Math.min(level ?? 0, ceiling);
 
     let pct;
-    if (isVolume) {
-      pct = Math.min(Math.round(clampedLevel * 100), isOverAmp ? 150 : 100);
-    } else {
-      pct = Math.round((clampedLevel / (maxLevel || 1)) * 100);
-    }
+    if (isVolume)
+      pct = Math.min(Math.round(clamped * 100), isOverAmp ? 150 : 100);
+    else pct = Math.round((clamped / (maxLevel || 1)) * 100);
 
-    this._osdState = { icon: iconName, level: clampedLevel, max: maxLevel };
+    this._osdState = { icon: iconName, level: clamped, max: maxLevel };
 
     const safeIcon = `${iconName}-symbolic`.replace(
       /-symbolic-symbolic$/,
@@ -1393,12 +1320,10 @@ export class DynamicIsland {
     if (isVolume) {
       this._osdSegBox.show();
       this._osdSmoothBg.hide();
-
-      const volOverAmp = clampedLevel > 1.0;
+      const volOverAmp = clamped > 1.0;
       const filledCount = volOverAmp
         ? OSD_SEG_COUNT
-        : Math.round(Math.min(clampedLevel, 1.0) * OSD_SEG_COUNT);
-
+        : Math.round(Math.min(clamped, 1.0) * OSD_SEG_COUNT);
       this._osdSegs.forEach((seg, i) => {
         if (i < filledCount) {
           seg.add_style_class_name("active");
@@ -1409,10 +1334,10 @@ export class DynamicIsland {
           seg.remove_style_class_name("over-amplified");
         }
       });
-    } else if (isBrightness) {
+    } else if (isBright) {
       this._osdSegBox.hide();
       this._osdSmoothBg.show();
-      this._pendingBrightnessFill = clampedLevel / (maxLevel || 1);
+      this._pendingBrightnessFill = clamped / (maxLevel || 1);
     }
 
     if (this._osdHideSrc) {
@@ -1424,40 +1349,35 @@ export class DynamicIsland {
       this._osdHideSrc = null;
       this._osdState = null;
       if (this._playing) this._transitionTo(State.COMPACT);
-      else if (this._settings.get_boolean("auto-hide"))
-        this._actor?.ease({
-          opacity: 0,
-          duration: 250,
-          mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-          onComplete: () => this._actor?.hide(),
-        });
       else this._transitionTo(State.PILL);
       return GLib.SOURCE_REMOVE;
     });
 
     if (this._state !== State.OSD) {
-      // Guard: don't show the OSD island if currently in fullscreen
       if (this._isFullscreen()) return;
+      this._showActor(100);
       this._transitionTo(State.OSD, () => {
-        if (isBrightness && this._pendingBrightnessFill !== undefined) {
+        if (isBright && this._pendingBrightnessFill !== null) {
           const bgW =
             this._osdSmoothBg.get_width() || Math.floor((OSD_W - 40) * scale);
           this._osdSmoothFill.set_width(
             Math.floor(bgW * this._pendingBrightnessFill),
           );
-          this._pendingBrightnessFill = undefined;
+          this._pendingBrightnessFill = null;
         }
       });
-    } else if (isBrightness) {
+    } else if (isBright) {
       const bgW =
         this._osdSmoothBg.get_width() || Math.floor((OSD_W - 40) * scale);
       this._osdSmoothFill.set_width(
-        Math.floor(bgW * (clampedLevel / (maxLevel || 1))),
+        Math.floor(bgW * (clamped / (maxLevel || 1))),
       );
     }
+
+    this._cancelAutoHide();
   }
 
-  // ── Notification Toasts ───────────────────────────────────────────────────
+  // ── Notifications ─────────────────────────────────────────────────────────
 
   _connectNotifications() {
     const tray = Main.messageTray;
@@ -1466,7 +1386,6 @@ export class DynamicIsland {
     this._notifMsgTrayAddedId = tray.connect("source-added", (_t, source) => {
       this._watchSource(source);
     });
-
     this._notifMsgTrayRemovedId = tray.connect(
       "source-removed",
       (_t, source) => {
@@ -1481,8 +1400,7 @@ export class DynamicIsland {
     );
 
     try {
-      const existing = tray.getSources?.() ?? [];
-      for (const source of existing) this._watchSource(source);
+      for (const source of tray.getSources?.() ?? []) this._watchSource(source);
     } catch (_e) {}
   }
 
@@ -1516,23 +1434,23 @@ export class DynamicIsland {
     this._notifSources.clear();
   }
 
-  /**
-   * NEW — show-notifications guard:
-   *   If the "show-notifications" setting is false this method returns
-   *   immediately without touching the island state at all.
-   */
   _showNotification(notif) {
     if (!this._actor || !this._notifView) return;
-
-    // NEW: honour the show-notifications toggle
     if (!this._settings.get_boolean("show-notifications")) return;
 
     const appName = notif.source?.title ?? "";
     const title = notif.title ?? "";
     const body = (notif.body ?? "").replace(/\n/g, " ");
-    const iconName = notif.source?.iconName ?? "dialog-information-symbolic";
 
-    this._notifIcon.set_icon_name(iconName);
+    // GNOME 45+: source.icon is a Gio.Icon; older: source.iconName is a string
+    const gicon = notif.source?.icon ?? null;
+    if (gicon) {
+      this._notifIcon.set_gicon(gicon);
+    } else {
+      const iconName = notif.source?.iconName ?? "dialog-information-symbolic";
+      this._notifIcon.set_icon_name(iconName);
+    }
+
     this._notifAppLabel.set_text(appName);
     this._notifTitleLabel.set_text(title);
     this._notifBodyLabel.set_text(body);
@@ -1545,11 +1463,9 @@ export class DynamicIsland {
       this._notifHideSrc = null;
     }
 
-    // Show the actor — _showActor() is a no-op when fullscreen is active,
-    // so notifications are silently suppressed while a fullscreen window is open.
     this._showActor(180);
-
     this._transitionTo(State.NOTIF);
+    this._cancelAutoHide();
 
     this._notifHideSrc = GLib.timeout_add(
       GLib.PRIORITY_DEFAULT,
@@ -1577,8 +1493,10 @@ export class DynamicIsland {
         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
         onComplete: () => this._actor?.hide(),
       });
+      this._resetAutoHideTimer();
     } else {
       this._transitionTo(restore);
+      if (!this._playing) this._resetAutoHideTimer();
     }
   }
 
@@ -1586,10 +1504,15 @@ export class DynamicIsland {
 
   _updateClock() {
     const now = GLib.DateTime.new_now_local();
-    const text = now ? now.format("%H:%M") : null;
+    const text = now?.format("%H:%M");
     if (text && this._clockLabel) this._clockLabel.set_text(text);
   }
 
+  /**
+   * Starts a two-phase clock: first fires at the next full minute boundary,
+   * then ticks every 60 s.  Uses a single GLib source ID at a time — the
+   * phase-2 source is scheduled only after phase-1 has fully completed.
+   */
   _startClock() {
     this._stopClock();
     this._updateClock();
@@ -1597,11 +1520,17 @@ export class DynamicIsland {
     const now = GLib.DateTime.new_now_local();
     const secsLeft = now ? Math.max(1, 60 - now.get_second()) : 60;
 
+    // Phase 1: wait until the next minute boundary
     this._clockSrc = GLib.timeout_add_seconds(
       GLib.PRIORITY_DEFAULT,
       secsLeft,
       () => {
+        // Null out phase-1 ID before scheduling phase-2 to avoid any window
+        // where _clockSrc could refer to an already-removed source.
+        this._clockSrc = null;
         this._updateClock();
+
+        // Phase 2: tick every 60 s
         this._clockSrc = GLib.timeout_add_seconds(
           GLib.PRIORITY_DEFAULT,
           60,
@@ -1610,6 +1539,7 @@ export class DynamicIsland {
             return GLib.SOURCE_CONTINUE;
           },
         );
+
         return GLib.SOURCE_REMOVE;
       },
     );
@@ -1626,11 +1556,10 @@ export class DynamicIsland {
 
   _startWaveform() {
     this._stopWaveform();
-
-    let phase = 0;
-    let beatEnergy = 0;
-    let beatCooldown = 0;
-    let volumeSmooth = 0.5;
+    let phase = 0,
+      beatEnergy = 0,
+      beatCooldown = 0,
+      volumeSmooth = 0.5;
 
     const n = WAVEFORM_BARS;
     const maxBarH = Math.floor(WAVEFORM_H * this._scale);
@@ -1677,7 +1606,6 @@ export class DynamicIsland {
           const amplitude = (maxBarH - 2) * vol * env;
           const h =
             2 + Math.abs(wave) * amplitude + beatOff * maxBarH * 0.55 * env;
-
           bar.ease({
             height: Math.max(2, Math.min(Math.round(h), maxBarH)),
             duration: WAVEFORM_MS - 20,
@@ -1697,107 +1625,7 @@ export class DynamicIsland {
     }
   }
 
-  // ── Seek tracking — FIX #4 ───────────────────────────────────────────────
-
-  _startSeekTracking() {
-    this._stopSeekTracking();
-    this._seekSrc = GLib.timeout_add_seconds(
-      GLib.PRIORITY_DEFAULT,
-      SEEK_TICK_S,
-      () => {
-        this._tickSeek();
-        return GLib.SOURCE_CONTINUE;
-      },
-    );
-  }
-
-  _stopSeekTracking() {
-    if (this._seekSrc) {
-      GLib.Source.remove(this._seekSrc);
-      this._seekSrc = null;
-    }
-  }
-
-  /**
-   * FIX #4: Two-phase seek update:
-   *   1. Immediately render an interpolated position using local monotonic time
-   *      so the bar moves smoothly between D-Bus polls.
-   *   2. Fire a D-Bus Property.Get("Position") call (2 s timeout) to resync
-   *      the baseline from the authoritative player position.
-   */
-  _tickSeek() {
-    if (!this._mediaProxy || !this._actor || !this._seekBg || !this._seekFill)
-      return;
-
-    // Phase 1: interpolated display (smooth, no network round-trip)
-    if (
-      this._state === State.EXPANDED &&
-      this._playing &&
-      this._trackLength > 0
-    ) {
-      const elapsedµs = GLib.get_monotonic_time() - this._seekBaseMonoTime;
-      const interpolatedPos = Math.min(
-        this._seekBasePosition + elapsedµs,
-        this._trackLength,
-      );
-      const pct = Math.max(0, Math.min(interpolatedPos / this._trackLength, 1));
-      this._seekFill.set_width(Math.floor(this._seekBg.get_width() * pct));
-      if (this._posLabel)
-        this._posLabel.set_text(this._µsToTime(interpolatedPos));
-      if (this._durLabel)
-        this._durLabel.set_text(this._µsToTime(this._trackLength));
-    }
-
-    // Phase 2: authoritative D-Bus poll — resync baseline (runs always)
-    const owner = this._mediaProxy.g_name_owner;
-    if (!owner) return;
-
-    Gio.DBus.session.call(
-      owner,
-      this._mediaProxy.g_object_path,
-      "org.freedesktop.DBus.Properties",
-      "Get",
-      new GLib.Variant("(ss)", [MPRIS_PLAYER_IFACE, "Position"]),
-      new GLib.VariantType("(v)"),
-      Gio.DBusCallFlags.NONE,
-      2000, // FIX #4: 2 s timeout — Spotify / Firefox are slow to respond
-      null,
-      (_conn, res) => {
-        if (!this._actor || !this._seekFill || !this._posLabel) return;
-        try {
-          const [posVar] = _conn.call_finish(res).deepUnpack();
-          const pos = Number(posVar.unpack());
-
-          // Resync local baseline with authoritative value
-          this._seekBasePosition = pos;
-          this._seekBaseMonoTime = GLib.get_monotonic_time();
-
-          // Update UI only when expanded (avoid flickering in compact)
-          if (this._state === State.EXPANDED && this._trackLength > 0) {
-            const pct = Math.max(0, Math.min(pos / this._trackLength, 1));
-            this._seekFill.set_width(
-              Math.floor(this._seekBg.get_width() * pct),
-            );
-            if (this._posLabel) this._posLabel.set_text(this._µsToTime(pos));
-            if (this._durLabel)
-              this._durLabel.set_text(this._µsToTime(this._trackLength));
-          } else if (this._state !== State.EXPANDED) {
-            if (this._seekFill) this._seekFill.set_width(0);
-            if (this._posLabel) this._posLabel.set_text("0:00");
-          }
-        } catch (_e) {
-          // Poll failed — interpolated value stays on screen until next tick
-        }
-      },
-    );
-  }
-
-  _µsToTime(µs) {
-    const s = Math.floor(µs / 1_000_000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  }
-
-  // ── Album art (async, aspect-ratio-safe) ─────────────────────────────────
+  // ── Album art ─────────────────────────────────────────────────────────────
 
   _loadAlbumArt(artUrl) {
     if (this._artCancellable) {
@@ -1809,13 +1637,14 @@ export class DynamicIsland {
       return;
     }
 
-    this._artCancellable = new Gio.Cancellable();
-    const file = Gio.File.new_for_uri(artUrl);
+    const cancellable = new Gio.Cancellable();
+    this._artCancellable = cancellable;
 
-    file.load_contents_async(this._artCancellable, (_source, res) => {
+    const file = Gio.File.new_for_uri(artUrl);
+    file.load_contents_async(cancellable, (_source, res) => {
+      if (!this._albumArtActor || !this._compactArtActor) return;
       try {
         const [, contents] = file.load_contents_finish(res);
-        if (!this._actor) return;
 
         const loader = GdkPixbuf.PixbufLoader.new();
         loader.write(contents);
@@ -1833,40 +1662,40 @@ export class DynamicIsland {
         const fitPixbuf = (maxSize) => {
           if (srcW <= 0 || srcH <= 0) return pixbuf;
           const ratio = Math.min(maxSize / srcW, maxSize / srcH);
-          const dstW = Math.max(1, Math.round(srcW * ratio));
-          const dstH = Math.max(1, Math.round(srcH * ratio));
-          return pixbuf.scale_simple(dstW, dstH, GdkPixbuf.InterpType.BILINEAR);
+          return pixbuf.scale_simple(
+            Math.max(1, Math.round(srcW * ratio)),
+            Math.max(1, Math.round(srcH * ratio)),
+            GdkPixbuf.InterpType.BILINEAR,
+          );
         };
 
-        // FIX #1: read art sizes from settings
-        const expandedArtPx = Math.floor(
+        const expandedPx = Math.floor(
           (this._settings.get_int("art-expanded-size") || ART_EXPANDED) * scale,
         );
-        const compactArtPx = Math.floor(
+        const compactPx = Math.floor(
           (this._settings.get_int("art-compact-size") || ART_COMPACT) * scale,
         );
 
-        const bigPb = fitPixbuf(expandedArtPx);
-        const smallPb = fitPixbuf(compactArtPx);
-
-        const bigImage = this._pixbufToImage(bigPb);
-        const smallImage = this._pixbufToImage(smallPb);
+        const bigPb = fitPixbuf(expandedPx);
+        const smallPb = fitPixbuf(compactPx);
+        const bigImg = this._pixbufToImage(bigPb);
+        const smallImg = this._pixbufToImage(smallPb);
 
         if (!this._albumArtActor || !this._compactArtActor) return;
 
-        if (bigImage) {
+        if (bigImg) {
           this._albumArtActor.set_size(bigPb.get_width(), bigPb.get_height());
-          this._albumArtActor.set_content(bigImage);
-          this._albumFallbackIcon.hide();
+          this._albumArtActor.set_content(bigImg);
+          this._albumFallbackIcon?.hide();
           this._albumArtActor.show();
         }
-        if (smallImage) {
+        if (smallImg) {
           this._compactArtActor.set_size(
             smallPb.get_width(),
             smallPb.get_height(),
           );
-          this._compactArtActor.set_content(smallImage);
-          this._compactFallbackIcon.hide();
+          this._compactArtActor.set_content(smallImg);
+          this._compactFallbackIcon?.hide();
           this._compactArtActor.show();
         }
 
@@ -1878,12 +1707,11 @@ export class DynamicIsland {
           }
         }
       } catch (e) {
-        if (e.matches && e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-          return;
+        if (e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) return;
         console.error("DynamicIsland: art load failed:", e.message);
         this._clearAlbumArt();
       }
-      this._artCancellable = null;
+      if (this._artCancellable === cancellable) this._artCancellable = null;
     });
   }
 
@@ -1918,7 +1746,7 @@ export class DynamicIsland {
       );
       return image;
     } catch (e) {
-      console.warn("DynamicIsland: pixbuf → Clutter.Image failed:", e.message);
+      console.warn("DynamicIsland: pixbuf→Image failed:", e.message);
       return null;
     }
   }
@@ -1932,7 +1760,6 @@ export class DynamicIsland {
       const channels = hasAlpha ? 4 : 3;
       const w = sample.get_width();
       const h = sample.get_height();
-
       let rSum = 0,
         gSum = 0,
         bSum = 0,
@@ -1949,14 +1776,12 @@ export class DynamicIsland {
           count++;
         }
       }
-
       if (count === 0) return null;
-
-      const darken = 0.35;
+      const d = 0.35;
       return {
-        r: Math.round((rSum / count) * darken),
-        g: Math.round((gSum / count) * darken),
-        b: Math.round((bSum / count) * darken),
+        r: Math.round((rSum / count) * d),
+        g: Math.round((gSum / count) * d),
+        b: Math.round((bSum / count) * d),
       };
     } catch (e) {
       console.warn(
@@ -1974,31 +1799,33 @@ export class DynamicIsland {
       this._artCancellable.cancel();
       this._artCancellable = null;
     }
+    this._albumArtActor = null;
+    this._compactArtActor = null;
 
     this._disconnectNotifications();
-
     this._stopClock();
-    this._stopSeekTracking();
     this._stopWaveform();
 
-    if (this._osdHideSrc) {
-      GLib.Source.remove(this._osdHideSrc);
-      this._osdHideSrc = null;
-    }
-    if (this._notifHideSrc) {
-      GLib.Source.remove(this._notifHideSrc);
-      this._notifHideSrc = null;
-    }
-    if (this._collapseTimeoutId) {
-      GLib.Source.remove(this._collapseTimeoutId);
-      this._collapseTimeoutId = null;
+    this._seekTracker?.destroy();
+    this._seekTracker = null;
+
+    for (const key of [
+      "_osdHideSrc",
+      "_notifHideSrc",
+      "_collapseTimeoutId",
+      "_autoHideSrc",
+      "_renderIdleSrc",
+    ]) {
+      if (this[key]) {
+        GLib.Source.remove(this[key]);
+        this[key] = null;
+      }
     }
 
     if (this._monitorsId) {
       Main.layoutManager.disconnect(this._monitorsId);
       this._monitorsId = 0;
     }
-
     if (this._fullscreenId) {
       global.display.disconnect(this._fullscreenId);
       this._fullscreenId = 0;

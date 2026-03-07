@@ -4,12 +4,12 @@
  * Last.fm and ListenBrainz scrobbling for the Dynamic Island extension.
  *
  * Scrobble rules (Last.fm spec):
- *   • Track must be ≥ 30 seconds long.
- *   • Must have played for min(½ duration, 240 s) before the scrobble fires.
- *   • "Now Playing" is sent immediately when a new track starts.
- *   • Play time is accumulated correctly across pause/resume cycles.
+ *   - Track must be ≥ 30 seconds long.
+ *   - Must have played for min(½ duration, 240 s) before the scrobble fires.
+ *   - "Now Playing" is sent immediately when a new track starts.
+ *   - Play time is accumulated correctly across pause/resume cycles.
  *
- * GSettings keys consumed (all in the extension schema):
+ * GSettings keys consumed:
  *   lastfm-enabled, lastfm-api-key, lastfm-api-secret, lastfm-session-key
  *   listenbrainz-enabled, listenbrainz-token
  */
@@ -17,34 +17,28 @@
 import GLib from "gi://GLib";
 import Soup from "gi://Soup";
 
-const LASTFM_URL = "https://ws.audioscrobbler.com/2.0/";
-const LB_URL = "https://api.listenbrainz.org/1/submit-listens";
-const MIN_DURATION_S = 30; // tracks shorter than this are never scrobbled
+const LASTFM_URL       = "https://ws.audioscrobbler.com/2.0/";
+const LB_URL           = "https://api.listenbrainz.org/1/submit-listens";
+const MIN_DURATION_S   = 30;  // tracks shorter than this are never scrobbled
 const MAX_SCROBBLE_AT_S = 240; // scrobble at most 4 minutes into a track
-const POLL_INTERVAL_S = 10; // how often to check whether threshold is reached
+const POLL_INTERVAL_S  = 10;  // how often to check whether threshold is reached
 
 export class Scrobbler {
   constructor(settings) {
     this._settings = settings;
-    this._session = new Soup.Session({ timeout: 15 });
+    // Session is created lazily in _getSession() so no GObject is constructed
+    // during the constructor call (which runs during enable() setup).
+    this._session = null;
 
-    // Current track state
-    this._track = null; // { title, artist, album, durationSecs, startedAt }
-    this._playedSecs = 0; // total play time accumulated for this track
-    this._playStartMono = null; // monotonic µs when current play-session began (null if paused)
-    this._scrobbled = false; // have we already scrobbled this track?
-    this._pollSrc = null; // GLib timer id for threshold polling
+    this._track       = null;  // { title, artist, album, durationSecs, startedAt }
+    this._playedSecs  = 0;
+    this._playStartMono = null;
+    this._scrobbled   = false;
+    this._pollSrc     = null;
   }
 
-  // ── Public API ─────────────────────────────────────────────────────────────
+  // ── Public API ────────────────────────────────────────────────────────────
 
-  /**
-   * Call when a new track starts playing.
-   * @param {string} title
-   * @param {string} artist
-   * @param {string} album
-   * @param {number} durationSecs — track length in seconds (0 = unknown)
-   */
   nowPlaying(title, artist, album, durationSecs) {
     this._reset();
 
@@ -58,10 +52,8 @@ export class Scrobbler {
     this._playStartMono = GLib.get_monotonic_time();
     this._scrobbled = false;
 
-    // Send "Now Playing" to each enabled service
     this._dispatch("nowPlaying", this._track);
 
-    // Don't schedule polling for very short or unknown-length tracks
     if (durationSecs < MIN_DURATION_S) return;
 
     this._pollSrc = GLib.timeout_add_seconds(
@@ -75,19 +67,16 @@ export class Scrobbler {
     );
   }
 
-  /** Call when playback pauses or the player reports Paused/Stopped. */
   paused() {
     this._accumulate();
-    this._checkThreshold(); // scrobble immediately if threshold was already passed
+    this._checkThreshold();
   }
 
-  /** Call when the same track resumes after a pause. */
   resumed() {
     if (this._playStartMono === null)
       this._playStartMono = GLib.get_monotonic_time();
   }
 
-  /** Call when all media stops (player gone). Flushes pending scrobble. */
   clearMedia() {
     this.paused();
     this._reset();
@@ -98,13 +87,18 @@ export class Scrobbler {
     try {
       this._session?.abort();
     } catch (_e) {}
-    this._session = null;
+    this._session  = null;
     this._settings = null;
   }
 
   // ── Internal state management ─────────────────────────────────────────────
 
-  /** Accumulate elapsed play time from current play-session into _playedSecs. */
+  _getSession() {
+    if (!this._session)
+      this._session = new Soup.Session({ timeout: 15 });
+    return this._session;
+  }
+
   _accumulate() {
     if (this._playStartMono === null) return;
     const elapsedµs = GLib.get_monotonic_time() - this._playStartMono;
@@ -112,7 +106,6 @@ export class Scrobbler {
     this._playStartMono = null;
   }
 
-  /** Total seconds played so far (accumulated + ongoing session). */
   _totalPlayedSecs() {
     let s = this._playedSecs;
     if (this._playStartMono !== null)
@@ -137,18 +130,14 @@ export class Scrobbler {
       GLib.Source.remove(this._pollSrc);
       this._pollSrc = null;
     }
-    this._track = null;
-    this._playedSecs = 0;
+    this._track         = null;
+    this._playedSecs    = 0;
     this._playStartMono = null;
-    this._scrobbled = false;
+    this._scrobbled     = false;
   }
 
   // ── Dispatch to enabled services ──────────────────────────────────────────
 
-  /**
-   * @param {"nowPlaying"|"scrobble"} action
-   * @param {object} track
-   */
   _dispatch(action, track) {
     if (
       this._settings?.get_boolean("lastfm-enabled") &&
@@ -171,43 +160,37 @@ export class Scrobbler {
   _lastfmNowPlaying({ title, artist, album, durationSecs }) {
     const params = {
       method: "track.updateNowPlaying",
-      track: title,
+      track:  title,
       artist,
-      sk: this._settings.get_string("lastfm-session-key"),
+      sk:     this._settings.get_string("lastfm-session-key"),
     };
     if (album) params.album = album;
     if (durationSecs > 0) params.duration = String(Math.floor(durationSecs));
     this._lastfmPost(params, (err) => {
       if (err)
-        console.warn(
-          "DynamicIsland/Scrobbler: Last.fm now-playing failed:",
-          err.message,
-        );
+        console.warn("DynamicIsland/Scrobbler: Last.fm now-playing failed:", err.message);
     });
   }
 
   _lastfmScrobble({ title, artist, album, durationSecs, startedAt }) {
     const params = {
-      method: "track.scrobble",
-      "track[0]": title,
-      "artist[0]": artist,
+      method:         "track.scrobble",
+      "track[0]":     title,
+      "artist[0]":    artist,
       "timestamp[0]": String(startedAt),
-      sk: this._settings.get_string("lastfm-session-key"),
+      sk:             this._settings.get_string("lastfm-session-key"),
     };
     if (album) params["album[0]"] = album;
     if (durationSecs > 0)
       params["duration[0]"] = String(Math.floor(durationSecs));
     this._lastfmPost(params, (err) => {
       if (err)
-        console.warn(
-          "DynamicIsland/Scrobbler: Last.fm scrobble failed:",
-          err.message,
-        );
-      else console.log(`DynamicIsland/Scrobbler: Last.fm scrobbled "${title}"`);
+        console.warn("DynamicIsland/Scrobbler: Last.fm scrobble failed:", err.message);
+      else
+        console.log(`DynamicIsland/Scrobbler: Last.fm scrobbled "${title}"`);
     });
   }
 
-  /** Compute the HMAC-style MD5 signature required by the Last.fm API. */
   _lastfmSign(params) {
     const secret = this._settings.get_string("lastfm-api-secret");
     const str =
@@ -220,9 +203,8 @@ export class Scrobbler {
   }
 
   _lastfmPost(params, callback) {
-    if (!this._session) return;
     params.api_key = this._settings.get_string("lastfm-api-key");
-    params.format = "json";
+    params.format  = "json";
     params.api_sig = this._lastfmSign(params);
 
     const body = Object.entries(params)
@@ -242,7 +224,7 @@ export class Scrobbler {
       GLib.Bytes.new(new TextEncoder().encode(body)),
     );
 
-    this._session.send_and_read_async(
+    this._getSession().send_and_read_async(
       msg,
       GLib.PRIORITY_DEFAULT,
       null,
@@ -271,7 +253,7 @@ export class Scrobbler {
   _lbScrobble({ title, artist, album, durationSecs, startedAt }) {
     const meta = {
       artist_name: artist,
-      track_name: title,
+      track_name:  title,
       additional_info: { listening_from: "dynamic-island-gnome" },
     };
     if (album) meta.release_name = album;
@@ -282,8 +264,7 @@ export class Scrobbler {
   }
 
   _lbPost(listenType, payload) {
-    if (!this._session) return;
-    const token = this._settings.get_string("listenbrainz-token");
+    const token = this._settings?.get_string("listenbrainz-token");
     if (!token) return;
 
     const body = JSON.stringify({
@@ -305,7 +286,7 @@ export class Scrobbler {
       GLib.Bytes.new(new TextEncoder().encode(body)),
     );
 
-    this._session.send_and_read_async(
+    this._getSession().send_and_read_async(
       msg,
       GLib.PRIORITY_DEFAULT,
       null,
@@ -314,10 +295,7 @@ export class Scrobbler {
           sess.send_and_read_finish(res);
         } catch (e) {
           if (!e.message?.includes("cancel"))
-            console.warn(
-              "DynamicIsland/Scrobbler: ListenBrainz failed:",
-              e.message,
-            );
+            console.warn("DynamicIsland/Scrobbler: ListenBrainz failed:", e.message);
         }
       },
     );

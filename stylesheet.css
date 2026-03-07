@@ -3,9 +3,9 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Root container ─────────────────────────────────────────────────────── */
-
 .dynamic-island {
   background-color: transparent;
+  /* background-color and border-radius are set inline (dynamic / scale-aware) */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -13,27 +13,62 @@
    ════════════════════════════════════════════════════════════════════════ */
 
 .di-pill-view {
-  padding: 0 16px;
+  /* Slightly tighter horizontal padding vs original 14px gives more inner
+     room for BT + weather + clock without crowding */
+  padding: 0 12px;
 }
 
+/* Clock — primary focal point, slightly bolder than before */
 .di-clock-label {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   color: rgba(255, 255, 255, 0.95);
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
   font-feature-settings: "tnum" 1;
+}
+
+/* ── Bluetooth indicator (pill) ──────────────────────────────────────────── */
+.di-bt-icon {
+  /* Soft blue that reads clearly without competing with the clock */
+  color: rgba(90, 170, 255, 0.88);
+}
+
+.di-bt-label {
+  font-size: 10px;
+  font-weight: 600;
+  /* Slightly muted so battery% is secondary to the icon */
+  color: rgba(255, 255, 255, 0.6);
+  font-feature-settings: "tnum" 1;
+  /* Hard cap so a missing-battery fallback never overflows the pill */
+  max-width: 36px;
+}
+
+/* ── Weather widget ──────────────────────────────────────────────────────── */
+.di-weather-icon {
+  font-size: 12px;
+}
+
+.di-weather-temp {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+/* ── Pill separator (between info group and clock) ───────────────────────── */
+.di-pill-sep {
+  width: 1px;
+  background-color: rgba(255, 255, 255, 0.18);
+  border-radius: 1px;
+  /* height is set inline (14px × scale); margins add a small buffer */
+  margin: 0 3px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    COMPACT VIEW
    ════════════════════════════════════════════════════════════════════════ */
 
-/*
- * Reduced left padding so the art thumbnail sits flush against the
- * left edge of the pill — keeps it consistently at the "corner."
- */
 .di-compact-view {
-  padding: 0 10px 0 6px;
+  padding: 0 10px 0 8px;
 }
 
 .di-compact-art {
@@ -45,14 +80,8 @@
   color: rgba(255, 255, 255, 0.45);
 }
 
-/* ── CAVA-style waveform ─────────────────────────────────────────────────
-   Each bar is solid white. The .di-waveform-fade overlay sits on top and
-   fades the tops of all bars into the dark island background, producing
-   the "CAVA emerging from darkness" look.
-   ─────────────────────────────────────────────────────────────────────── */
-
 .di-waveform-bar {
-  width: 3px; /* fallback — explicit width also set in JS */
+  width: 3px;
   border-radius: 2px 2px 1px 1px;
   background-color: rgba(255, 255, 255, 0.88);
 }
@@ -66,11 +95,11 @@
    ════════════════════════════════════════════════════════════════════════ */
 
 .di-expanded-view {
-  padding: 18px 20px;
+  padding: 14px 18px;
 }
 
 .di-album-art {
-  border-radius: 14px;
+  border-radius: 12px;
   background-color: transparent;
   min-width: 110px;
   min-height: 110px;
@@ -80,60 +109,82 @@
   color: rgba(255, 255, 255, 0.2);
 }
 
+/* ── Bluetooth badge (bottom-left overlay on album art) ─────────────────── */
+/* Sits inside the album art BinLayout at START/END alignment.               */
+/* Dark pill with icon + optional battery label.                             */
+.di-bt-badge {
+  border-radius: 999px;
+  background-color: rgba(0, 0, 0, 0.62);
+  padding: 3px 6px 3px 4px;
+  margin: 6px; /* inset from album art corner */
+}
+
+.di-bt-badge-icon {
+  color: rgba(90, 170, 255, 0.95);
+}
+
+.di-bt-badge-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  font-feature-settings: "tnum" 1;
+}
+
+/* ── Track info ──────────────────────────────────────────────────────────── */
 .di-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 800;
   color: #ffffff;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
 }
 
 .di-artist {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.48);
+}
+
+/* ── Seek bar ────────────────────────────────────────────────────────────── */
+/* Hit area is 20px tall; the visual bar is 6px centered via margin */
+.di-seek-hit {
+  background-color: transparent;
 }
 
 .di-seek-bg {
-  background-color: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.14);
   border-radius: 9999px;
 }
 
 .di-seek-fill {
-  background-color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.9);
   border-radius: 9999px;
 }
 
 .di-time-row {
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .di-time {
   font-size: 10px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(255, 255, 255, 0.35);
   font-feature-settings: "tnum" 1;
 }
 
-/* ── Playback controls ───────────────────────────────────────────────── */
-
+/* ── Playback controls ───────────────────────────────────────────────────── */
 .di-controls {
-  margin-top: 2px;
+  /* spacing set inline */
 }
 
 .di-ctrl-btn {
   background-color: transparent;
   border: none;
-  padding: 8px;
+  padding: 7px;
   border-radius: 50%;
 }
 
 .di-ctrl-btn:hover {
   background-color: rgba(255, 255, 255, 0.1);
-}
-
-.di-ctrl-btn:focus {
-  outline: 2px solid rgba(255, 255, 255, 0.4);
-  outline-offset: 2px;
 }
 
 .di-ctrl-icon {
@@ -170,7 +221,7 @@
 }
 
 .di-osd-seg.active.over-amplified {
-  background-color: #ff3b30;
+  background-color: #ff453a;
 }
 
 .di-osd-smooth-bg {
@@ -184,11 +235,10 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   NOTIFICATION TOAST VIEW  (Feature 2)
+   NOTIFICATION TOAST VIEW
    ════════════════════════════════════════════════════════════════════════ */
 
 .di-notif-view {
-  /* padding set inline (scale-aware) */
 }
 
 .di-notif-icon {
@@ -201,7 +251,7 @@
   font-size: 9px;
   font-weight: 500;
   color: rgba(255, 255, 255, 0.45);
-  letter-spacing: 0.3px;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
 }
 
@@ -213,6 +263,5 @@
 
 .di-notif-body {
   font-size: 11px;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.52);
 }

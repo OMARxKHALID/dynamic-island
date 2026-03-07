@@ -22,6 +22,15 @@
       <default>false</default>
       <summary>Auto-hide when no media is active</summary>
     </key>
+    <key name="auto-hide-delay" type="i">
+      <default>15</default>
+      <summary>Seconds of idle before the island hides (0 = never)</summary>
+      <description>
+        When auto-hide is enabled, the island fades out after this many seconds
+        of inactivity (no media, OSD, notification, or hover). Set to 0 to
+        disable the idle timeout (island stays until media stops).
+      </description>
+    </key>
     <key name="intercept-osd" type="b">
       <default>true</default>
       <summary>Replace system volume/brightness OSD</summary>
@@ -67,11 +76,6 @@
       <default>''</default>
       <summary>Last.fm API secret</summary>
     </key>
-    <!--
-      The session key is obtained by authenticating with username + password
-      (via auth.getMobileSession) and stored here permanently.  The password
-      itself is NEVER stored — only this token.
-    -->
     <key name="lastfm-session-key" type="s">
       <default>''</default>
       <summary>Last.fm session key (stored after authentication)</summary>
@@ -95,6 +99,11 @@
     <key name="player-blocklist" type="as">
       <default>[]</default>
       <summary>Blocked media player identities (MPRIS bus-name suffixes)</summary>
+      <description>
+        Comma-separated list of player identities to ignore, e.g. "firefox,chromium".
+        The identity is the lowercase suffix after "org.mpris.MediaPlayer2." with
+        trailing instance numbers stripped.
+      </description>
     </key>
 
     <!-- ── Timing ────────────────────────────────────────────────────────── -->
