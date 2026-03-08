@@ -2,12 +2,6 @@
  * weather.js
  *
  * Lightweight weather client for the Dynamic Island pill view.
- * Uses wttr.in (no API key required).
- *
- * GSettings keys consumed:
- *   show-weather, weather-location (empty = auto-detect), weather-units
- *
- * Calls onUpdate({ temp: "22°C", icon: "☀️" }) after every successful fetch.
  */
 
 import GLib from "gi://GLib";

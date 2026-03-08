@@ -82,10 +82,18 @@ export class QuickSettingsTile {
   }
 
   disable() {
+    const qs = Main.panel?.statusArea?.quickSettings;
     if (this._indicator) {
       if (this._toggledId) {
         this._indicator.toggle.disconnect(this._toggledId);
         this._toggledId = 0;
+      }
+      if (qs) {
+        try {
+          qs.removeExternalIndicator(this._indicator);
+        } catch (e) {
+          console.warn("DynamicIsland: could not remove Quick Settings indicator:", e.message);
+        }
       }
       this._indicator.destroy();
       this._indicator = null;

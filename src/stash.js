@@ -2,11 +2,6 @@
  * stash.js
  *
  * File Stash — D-Bus receiver + file-operation engine for Dynamic Island.
- *
- * GSettings keys consumed:
- *   stash-enabled            — if false, start() is a no-op
- *   stash-auto-clear         — clear stash after successful move/copy
- *   stash-notify-on-complete — send a desktop notification on completion
  */
 
 import GLib from "gi://GLib";

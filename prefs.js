@@ -2,14 +2,6 @@
  * prefs.js
  *
  * Preferences window for Dynamic Island.
- * Runs in the GTK/Adw preferences process — NEVER import Clutter/St/Shell here.
- *
- * Fixes applied:
- *  - WeatherClient properly destroyed when prefs window closes (no timer/session leak).
- *  - lastfm-username removed (key removed from gschema).
- *  - Weather section redesigned: Adw.EntryRow, instant refresh on selection.
- *  - Selection from autocomplete list triggers immediate weather fetch (no debounce).
- *  - searchTimeoutId GLib source cleaned up on page destroy.
  */
 
 import Adw from "gi://Adw";
@@ -33,8 +25,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     window.add(this._buildScrobblingPage(settings));
     window.add(this._buildSystemPage(settings));
 
-    // FIX: destroy WeatherClient when window closes so its 30-min timer
-    // and Soup.Session are not left running in the GTK process.
     window.connect("close-request", () => {
       this._weatherClient?.destroy();
       this._weatherClient = null;

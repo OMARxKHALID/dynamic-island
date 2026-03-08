@@ -1,21 +1,7 @@
 /**
  * osd.js
  *
- * Intercepts GNOME Shell's OSD (volume / brightness popups) and redirects
- * them to the Dynamic Island instead.
- *
- * Why we patch Main.osdWindowManager.show():
- *   GNOME Shell has no public signal or hook for "OSD about to show".  The
- *   only reliable interception point is the show() method itself.  The patch
- *   stores the original function and restores it exactly in disable(), so the
- *   system OSD is fully reinstated when the extension is disabled or removed.
- *   Any icon type we do not handle falls through to the original implementation
- *   unchanged, so other extensions that show custom OSD types are unaffected.
- *
- * Volume clamping:
- *   GNOME Shell passes level in 0.0–1.0 for normal volume and up to 1.5 when
- *   "Allow Louder Than 100%" (over-amplification) is active.  The raw value is
- *   clamped before forwarding so the island never displays more than 150%.
+ * Intercepts GNOME Shell's OSD (volume / brightness popups).
  */
 
 import Gio from "gi://Gio";

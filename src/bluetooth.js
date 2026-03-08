@@ -1,15 +1,7 @@
 /**
  * bluetooth.js
  *
- * Watches the BlueZ D-Bus service for connected Bluetooth devices and emits
- * an onChanged callback whenever the set of connected devices changes.
- *
- * Gracefully does nothing on systems where BlueZ is not running.
- *
- * Calls onChanged([ { name, icon, battery } ]) — list of currently connected
- * devices; empty array means no devices are connected.
- *
- * GSettings keys consumed: show-bluetooth
+ * Watches the BlueZ D-Bus service for connected Bluetooth devices.
  */
 
 import GLib from "gi://GLib";

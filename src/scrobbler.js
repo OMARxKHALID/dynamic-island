@@ -2,16 +2,6 @@
  * scrobbler.js
  *
  * Last.fm and ListenBrainz scrobbling for the Dynamic Island extension.
- *
- * Scrobble rules (Last.fm spec):
- *   - Track must be ≥ 30 seconds long.
- *   - Must have played for min(½ duration, 240 s) before the scrobble fires.
- *   - "Now Playing" is sent immediately when a new track starts.
- *   - Play time is accumulated correctly across pause/resume cycles.
- *
- * GSettings keys consumed:
- *   lastfm-enabled, lastfm-api-key, lastfm-api-secret, lastfm-session-key
- *   listenbrainz-enabled, listenbrainz-token
  */
 
 import GLib from "gi://GLib";
