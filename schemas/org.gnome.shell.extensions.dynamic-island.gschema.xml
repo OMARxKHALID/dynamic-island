@@ -146,6 +146,10 @@
       <default>false</default>
       <summary>Use album art dominant colour as island background</summary>
     </key>
+    <key name="font-size-multiplier" type="d">
+      <default>1.0</default>
+      <summary>Text size multiplier (0.5–2.0)</summary>
+    </key>
 
     <!-- ── State dimensions ──────────────────────────────────────────────── -->
     <key name="pill-width"      type="i"><default>160</default><summary>Idle state width (px)</summary></key>

@@ -5,6 +5,7 @@
 /* ── Root container ─────────────────────────────────────────────────────── */
 .dynamic-island {
   background-color: transparent;
+  font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", monospace;
   /* background-color and border-radius are set inline (dynamic / scale-aware) */
 }
 
@@ -20,10 +21,10 @@
 
 /* Clock — primary focal point, slightly bolder than before */
 .di-clock-label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.95);
-  letter-spacing: 0.3px;
+  letter-spacing: 0.1px;
   font-feature-settings: "tnum" 1;
 }
 
@@ -34,13 +35,13 @@
 }
 
 .di-bt-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   /* Slightly muted so battery% is secondary to the icon */
   color: rgba(255, 255, 255, 0.6);
   font-feature-settings: "tnum" 1;
   /* Hard cap so a missing-battery fallback never overflows the pill */
-  max-width: 36px;
+  max-width: 48px;
 }
 
 /* ── Weather widget ──────────────────────────────────────────────────────── */
@@ -49,9 +50,9 @@
 }
 
 .di-weather-temp {
-  font-size: 11px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 /* ── Pill separator (between info group and clock) ───────────────────────── */
@@ -173,7 +174,7 @@
 
 /* ── Playback controls ───────────────────────────────────────────────────── */
 .di-controls {
-  /* spacing set inline */
+  border: none;
 }
 
 .di-ctrl-btn {
@@ -239,6 +240,7 @@
    ════════════════════════════════════════════════════════════════════════ */
 
 .di-notif-view {
+  background-color: transparent;
 }
 
 .di-notif-icon {

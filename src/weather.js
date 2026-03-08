@@ -65,12 +65,12 @@ export class WeatherClient {
    * Returns a promise resolving to an array of { name, country, lat, lon }.
    */
   search(query) {
-    if (!query || query.length < 3) return Promise.resolve([]);
+    if (!query || query.length < 1) return Promise.resolve([]);
     if (!this._session) return Promise.resolve([]);
 
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
     const msg = Soup.Message.new("GET", url);
-    msg.get_request_headers().append("User-Agent", "DynamicIsland-GNOME-Prefs/1.0");
+    msg.get_request_headers().append("User-Agent", "DynamicIsland-GNOME-Extension/1.1 (https://github.com/omarxkhalid/dynamic-island)");
 
     return new Promise((resolve) => {
       this._session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (session, res) => {

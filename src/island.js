@@ -96,6 +96,7 @@ export class IslandCore {
 
     // Cached settings values
     this._scale = 1.0;
+    this._fontSizeMultiplier = 1.0;
     this._animDur = 280;
 
     // Seek tracker (created in init())
@@ -106,6 +107,7 @@ export class IslandCore {
 
   init() {
     this._scale = this._settings.get_double("notch-scale") || 1.0;
+    this._fontSizeMultiplier = this._settings.get_double("font-size-multiplier") || 1.0;
     this._animDur = this._settings.get_int("animation-duration") || 280;
 
     this._seekTracker = new SeekTracker(this._settings);
@@ -132,6 +134,11 @@ export class IslandCore {
 
     watch("notch-scale", () => {
       this._scale = this._settings.get_double("notch-scale") || 1.0;
+      this._refreshUI();
+    });
+
+    watch("font-size-multiplier", () => {
+      this._fontSizeMultiplier = this._settings.get_double("font-size-multiplier") || 1.0;
       this._refreshUI();
     });
 
@@ -345,6 +352,7 @@ export class IslandCore {
       style_class: "di-bt-label",
       text: "",
       y_align: Clutter.ActorAlign.CENTER,
+      style: this._getFont(12),
     });
     this._btIndicator.add_child(this._btDeviceIcon);
     this._btIndicator.add_child(this._btBatteryLabel);
@@ -363,18 +371,20 @@ export class IslandCore {
       style_class: "di-weather-icon",
       text: "",
       y_align: Clutter.ActorAlign.CENTER,
+      style: this._getFont(12),
     });
     this._weatherTempLabel = new St.Label({
       style_class: "di-weather-temp",
       text: "",
       y_align: Clutter.ActorAlign.CENTER,
+      style: this._getFont(12),
     });
     this._weatherWidget.add_child(this._weatherIconLabel);
     this._weatherWidget.add_child(this._weatherTempLabel);
 
-    this._pillPrefixSpacer = new St.Widget({ x_expand: true, visible: false });
-    this._pillSuffixSpacer = new St.Widget({ x_expand: true, visible: false });
-    this._pillMidSpacer = new St.Widget({ x_expand: true, visible: true });
+    this._pillPrefixSpacer = new St.Widget({ x_expand: true, x_align: Clutter.ActorAlign.FILL, visible: false });
+    this._pillSuffixSpacer = new St.Widget({ x_expand: true, x_align: Clutter.ActorAlign.FILL, visible: false });
+    this._pillMidSpacer = new St.Widget({ x_expand: true, x_align: Clutter.ActorAlign.FILL, visible: true });
 
     // Subtle 1 px vertical separator between the info group and the clock.
     // Visible only when at least one info widget (BT / weather) is shown.
@@ -390,6 +400,7 @@ export class IslandCore {
       style_class: "di-clock-label",
       text: "--:--",
       y_align: Clutter.ActorAlign.CENTER,
+      style: this._getFont(12),
     });
     this._clockLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
 
@@ -532,11 +543,19 @@ export class IslandCore {
       style: `spacing: ${Math.floor(4 * scale)}px;`,
     });
 
-    this._titleLabel = new St.Label({ style_class: "di-title", text: "" });
+    this._titleLabel = new St.Label({
+      style_class: "di-title",
+      text: "",
+      style: this._getFont(14),
+    });
     this._titleLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
     this._titleLabel.visible = false;
 
-    this._artistLabel = new St.Label({ style_class: "di-artist", text: "" });
+    this._artistLabel = new St.Label({
+      style_class: "di-artist",
+      text: "",
+      style: this._getFont(11),
+    });
     this._artistLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
     this._artistLabel.visible = false;
 
@@ -573,8 +592,16 @@ export class IslandCore {
       vertical: false,
       x_expand: true,
     });
-    this._posLabel = new St.Label({ style_class: "di-time", text: "0:00" });
-    this._durLabel = new St.Label({ style_class: "di-time", text: "0:00" });
+    this._posLabel = new St.Label({
+      style_class: "di-time",
+      text: "0:00",
+      style: this._getFont(10),
+    });
+    this._durLabel = new St.Label({
+      style_class: "di-time",
+      text: "0:00",
+      style: this._getFont(10),
+    });
     this._timeRow.add_child(this._posLabel);
     this._timeRow.add_child(new St.Widget({ x_expand: true }));
     this._timeRow.add_child(this._durLabel);
@@ -656,6 +683,7 @@ export class IslandCore {
       text: "",
       x_expand: true,
       x_align: Clutter.ActorAlign.END,
+      style: this._getFont(14),
     });
     topRow.add_child(this._osdIcon);
     topRow.add_child(this._osdValueLabel);
@@ -724,18 +752,21 @@ export class IslandCore {
     this._notifAppLabel = new St.Label({
       style_class: "di-notif-app",
       text: "",
+      style: this._getFont(9),
     });
     this._notifAppLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
     this._notifTitleLabel = new St.Label({
       style_class: "di-notif-title",
       text: "",
+      style: this._getFont(13),
     });
     this._notifTitleLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
     this._notifBodyLabel = new St.Label({
       style_class: "di-notif-body",
       text: "",
+      style: this._getFont(11),
     });
     this._notifBodyLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
@@ -877,9 +908,11 @@ export class IslandCore {
     );
   }
   _getArtCompactSize() {
-    return Math.floor(
-      (this._settings.get_int("art-compact-size") || ART_COMPACT) * this._scale,
-    );
+    return Math.floor((this._settings.get_int("art-compact-size") || ART_COMPACT) * this._scale);
+  }
+
+  _getFont(basePx) {
+    return `font-size: ${Math.floor(basePx * this._scale * this._fontSizeMultiplier)}px;`;
   }
 
   _repositionForSize(width) {
@@ -988,6 +1021,8 @@ export class IslandCore {
         this._osdState.level,
         this._osdState.max,
       );
+
+    this._updatePillSep();
   }
 
   // ── Notch style ───────────────────────────────────────────────────────────

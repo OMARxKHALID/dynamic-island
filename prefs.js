@@ -14,6 +14,7 @@
 import Adw from "gi://Adw";
 import Gtk from "gi://Gtk";
 import Gio from "gi://Gio";
+import GLib from "gi://GLib";
 import { ExtensionPreferences } from "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js";
 
 import { WeatherClient } from "./src/weather.js";
@@ -22,8 +23,8 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
   fillPreferencesWindow(window) {
     const settings = this.getSettings();
     this._weatherClient = new WeatherClient(settings);
-    this._weatherClient.start(() => {}); // start session for searching
-    
+    // session will be started in the weather section later
+
     window.set_default_size(720, 700);
     window.set_title("Dynamic Island");
 
@@ -47,58 +48,161 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     page.add(layoutGroup);
 
-    layoutGroup.add(this._spinRow(settings, "position-offset", {
-      title: "Horizontal Shift",
-      subtitle: "Move the island left (−) or right (+) for notch / camera alignment",
-      icon: "go-next-symbolic",
-      lower: -1200, upper: 1200, step: 5, page: 50,
-    }));
+    layoutGroup.add(
+      this._spinRow(settings, "position-offset", {
+        title: "Horizontal Shift",
+        subtitle:
+          "Move the island left (−) or right (+) for notch / camera alignment",
+        icon: "go-next-symbolic",
+        lower: -1200,
+        upper: 1200,
+        step: 5,
+        page: 50,
+      }),
+    );
 
-    layoutGroup.add(this._switchRow(settings, "show-album-art", {
-      title: "Show Album Art",
-      subtitle: "Display album covers in the expanded view",
-      icon: "image-x-generic-symbolic",
-    }));
+    layoutGroup.add(
+      this._switchRow(settings, "show-album-art", {
+        title: "Show Album Art",
+        subtitle: "Display album covers in the expanded view",
+        icon: "image-x-generic-symbolic",
+      }),
+    );
 
-    layoutGroup.add(this._switchRow(settings, "dynamic-art-color", {
-      title: "Dynamic Art Colour",
-      subtitle: "Tint the island background with the dominant colour from album art",
-      icon: "color-select-symbolic",
-    }));
+    layoutGroup.add(
+      this._switchRow(settings, "dynamic-art-color", {
+        title: "Dynamic Art Colour",
+        subtitle:
+          "Tint the island background with the dominant colour from album art",
+        icon: "color-select-symbolic",
+      }),
+    );
 
-    layoutGroup.add(this._switchRow(settings, "show-seek-bar", {
-      title: "Show Progress Bar",
-      subtitle: "Display the music timer and seek bar in the expanded view",
-      icon: "media-seek-forward-symbolic",
-    }));
+    layoutGroup.add(
+      this._switchRow(settings, "show-seek-bar", {
+        title: "Show Progress Bar",
+        subtitle: "Display the music timer and seek bar in the expanded view",
+        icon: "media-seek-forward-symbolic",
+      }),
+    );
 
-    layoutGroup.add(this._spinRow(settings, "notch-scale", {
-      title: "Global Scaling",
-      subtitle: "Resize the entire island interface",
-      icon: "zoom-in-symbolic",
-      lower: 0.5, upper: 3.0, step: 0.05, page: 0.1, digits: 2,
-    }));
+    layoutGroup.add(
+      this._spinRow(settings, "notch-scale", {
+        title: "Global Scaling",
+        subtitle: "Resize the entire island interface",
+        icon: "zoom-in-symbolic",
+        lower: 0.5,
+        upper: 3.0,
+        step: 0.05,
+        page: 0.1,
+        digits: 2,
+      }),
+    );
+
+    layoutGroup.add(
+      this._spinRow(settings, "font-size-multiplier", {
+        title: "Font Size Multiplier",
+        subtitle: "Scale text independently of the island size",
+        icon: "format-text-size-symbolic",
+        lower: 0.5,
+        upper: 2.0,
+        step: 0.05,
+        page: 0.1,
+        digits: 2,
+      }),
+    );
 
     const dimensionsGroup = new Adw.PreferencesGroup({
       title: "Dimensions",
-      description: "Customise the exact pixel sizes of each state (base size before scaling)",
+      description:
+        "Customise the exact pixel sizes of each state (base size before scaling)",
     });
     page.add(dimensionsGroup);
 
-    dimensionsGroup.add(this._spinRow(settings, "pill-width", { title: "Idle Width", lower: 50, upper: 800, step: 5 }));
-    dimensionsGroup.add(this._spinRow(settings, "pill-height", { title: "Idle Height", lower: 20, upper: 200, step: 2 }));
+    dimensionsGroup.add(
+      this._spinRow(settings, "pill-width", {
+        title: "Idle Width",
+        lower: 50,
+        upper: 800,
+        step: 5,
+      }),
+    );
+    dimensionsGroup.add(
+      this._spinRow(settings, "pill-height", {
+        title: "Idle Height",
+        lower: 20,
+        upper: 200,
+        step: 2,
+      }),
+    );
 
-    dimensionsGroup.add(this._spinRow(settings, "compact-width", { title: "Compact Width (Waveform)", lower: 50, upper: 800, step: 5 }));
-    dimensionsGroup.add(this._spinRow(settings, "compact-height", { title: "Compact Height", lower: 20, upper: 200, step: 2 }));
+    dimensionsGroup.add(
+      this._spinRow(settings, "compact-width", {
+        title: "Compact Width (Waveform)",
+        lower: 50,
+        upper: 800,
+        step: 5,
+      }),
+    );
+    dimensionsGroup.add(
+      this._spinRow(settings, "compact-height", {
+        title: "Compact Height",
+        lower: 20,
+        upper: 200,
+        step: 2,
+      }),
+    );
 
-    dimensionsGroup.add(this._spinRow(settings, "expanded-width", { title: "Expanded Width (Media Player)", lower: 150, upper: 800, step: 5 }));
-    dimensionsGroup.add(this._spinRow(settings, "expanded-height", { title: "Expanded Height", lower: 50, upper: 500, step: 5 }));
+    dimensionsGroup.add(
+      this._spinRow(settings, "expanded-width", {
+        title: "Expanded Width (Media Player)",
+        lower: 150,
+        upper: 800,
+        step: 5,
+      }),
+    );
+    dimensionsGroup.add(
+      this._spinRow(settings, "expanded-height", {
+        title: "Expanded Height",
+        lower: 50,
+        upper: 500,
+        step: 5,
+      }),
+    );
 
-    dimensionsGroup.add(this._spinRow(settings, "osd-width", { title: "OSD Width (Volume/Brightness)", lower: 100, upper: 800, step: 5 }));
-    dimensionsGroup.add(this._spinRow(settings, "osd-height", { title: "OSD Height", lower: 50, upper: 300, step: 2 }));
+    dimensionsGroup.add(
+      this._spinRow(settings, "osd-width", {
+        title: "OSD Width (Volume/Brightness)",
+        lower: 100,
+        upper: 800,
+        step: 5,
+      }),
+    );
+    dimensionsGroup.add(
+      this._spinRow(settings, "osd-height", {
+        title: "OSD Height",
+        lower: 50,
+        upper: 300,
+        step: 2,
+      }),
+    );
 
-    dimensionsGroup.add(this._spinRow(settings, "art-expanded-size", { title: "Expanded Cover Art Size", lower: 20, upper: 300, step: 2 }));
-    dimensionsGroup.add(this._spinRow(settings, "art-compact-size", { title: "Compact Cover Art Size", lower: 10, upper: 100, step: 2 }));
+    dimensionsGroup.add(
+      this._spinRow(settings, "art-expanded-size", {
+        title: "Expanded Cover Art Size",
+        lower: 20,
+        upper: 300,
+        step: 2,
+      }),
+    );
+    dimensionsGroup.add(
+      this._spinRow(settings, "art-compact-size", {
+        title: "Compact Cover Art Size",
+        lower: 10,
+        upper: 100,
+        step: 2,
+      }),
+    );
 
     const styleGroup = new Adw.PreferencesGroup({
       title: "Colors & Transparency",
@@ -117,10 +221,15 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     styleGroup.add(colorRow);
 
-    styleGroup.add(this._spinRow(settings, "background-opacity", {
-      title: "Transparency",
-      lower: 0.1, upper: 1.0, step: 0.05, digits: 2,
-    }));
+    styleGroup.add(
+      this._spinRow(settings, "background-opacity", {
+        title: "Transparency",
+        lower: 0.1,
+        upper: 1.0,
+        step: 0.05,
+        digits: 2,
+      }),
+    );
 
     return page;
   }
@@ -139,16 +248,21 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     page.add(generalGroup);
 
-    generalGroup.add(this._switchRow(settings, "auto-hide", {
-      title: "Auto-Hide When Idle",
-      subtitle: "Only show the island when music or alerts are active",
-      icon: "eye-not-looking-symbolic",
-    }));
+    generalGroup.add(
+      this._switchRow(settings, "auto-hide", {
+        title: "Auto-Hide When Idle",
+        subtitle: "Only show the island when music or alerts are active",
+        icon: "eye-not-looking-symbolic",
+      }),
+    );
 
     const delayRow = this._spinRow(settings, "auto-hide-delay", {
       title: "Idle Timeout (seconds)",
       subtitle: "How long to wait before hiding (0 = wait until media stops)",
-      lower: 0, upper: 120, step: 5, page: 15,
+      lower: 0,
+      upper: 120,
+      step: 5,
+      page: 15,
     });
     generalGroup.add(delayRow);
 
@@ -156,43 +270,62 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       delayRow.set_sensitive(settings.get_boolean("auto-hide"));
     };
     updateDelayRow();
-    const autoHideSigId = settings.connect("changed::auto-hide", updateDelayRow);
+    const autoHideSigId = settings.connect(
+      "changed::auto-hide",
+      updateDelayRow,
+    );
     // Disconnect when the preferences window is closed
     page.connect("destroy", () => settings.disconnect(autoHideSigId));
 
-    generalGroup.add(this._switchRow(settings, "intercept-osd", {
-      title: "System Volume / Brightness OSD",
-      subtitle: "Show volume and brightness changes inside the island",
-      icon: "audio-volume-high-symbolic",
-    }));
+    generalGroup.add(
+      this._switchRow(settings, "intercept-osd", {
+        title: "System Volume / Brightness OSD",
+        subtitle: "Show volume and brightness changes inside the island",
+        icon: "audio-volume-high-symbolic",
+      }),
+    );
 
-    generalGroup.add(this._switchRow(settings, "persist-compact-media", {
-      title: "Keep Media View While Paused",
-      subtitle: "Show the media waveform and cover instead of the clock when paused",
-      icon: "media-playback-pause-symbolic",
-    }));
+    generalGroup.add(
+      this._switchRow(settings, "persist-compact-media", {
+        title: "Keep Media View While Paused",
+        subtitle:
+          "Show the media waveform and cover instead of the clock when paused",
+        icon: "media-playback-pause-symbolic",
+      }),
+    );
 
-    generalGroup.add(this._spinRow(settings, "osd-timeout", {
-      title: "OSD Duration (ms)",
-      subtitle: "How long volume and brightness popups stay visible",
-      lower: 500, upper: 10000, step: 250,
-    }));
+    generalGroup.add(
+      this._spinRow(settings, "osd-timeout", {
+        title: "OSD Duration (ms)",
+        subtitle: "How long volume and brightness popups stay visible",
+        lower: 500,
+        upper: 10000,
+        step: 250,
+      }),
+    );
 
-    generalGroup.add(this._switchRow(settings, "show-notifications", {
-      title: "Notification Toasts",
-      subtitle: "Show incoming system notifications inside the island",
-      icon: "preferences-system-notifications-symbolic",
-    }));
+    generalGroup.add(
+      this._switchRow(settings, "show-notifications", {
+        title: "Notification Toasts",
+        subtitle: "Show incoming system notifications inside the island",
+        icon: "preferences-system-notifications-symbolic",
+      }),
+    );
 
     const animGroup = new Adw.PreferencesGroup({ title: "Animation" });
     page.add(animGroup);
 
-    animGroup.add(this._spinRow(settings, "animation-duration", {
-      title: "Transition Speed (ms)",
-      subtitle: "How fast the island expands and collapses",
-      icon: "preferences-desktop-animation-symbolic",
-      lower: 50, upper: 1000, step: 10, page: 100,
-    }));
+    animGroup.add(
+      this._spinRow(settings, "animation-duration", {
+        title: "Transition Speed (ms)",
+        subtitle: "How fast the island expands and collapses",
+        icon: "preferences-desktop-animation-symbolic",
+        lower: 50,
+        upper: 1000,
+        step: 10,
+        page: 100,
+      }),
+    );
 
     const clockGroup = new Adw.PreferencesGroup({
       title: "Clock & Time",
@@ -200,48 +333,98 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     page.add(clockGroup);
 
-    clockGroup.add(this._comboRow(settings, "time-format", {
-      title: "Clock Format",
-      choices: [
-        { label: "Time Only (14:30)", value: "%H:%M" },
-        { label: "Day & Time (Tue 14:30)", value: "%a %H:%M" },
-        { label: "Date & Time (Mar 08, 14:30)", value: "%b %d, %H:%M" },
-        { label: "Full Date & Time (Mar 08, 2026 14:30)", value: "%b %d, %Y %H:%M" },
-      ],
-    }));
+    clockGroup.add(
+      this._comboRow(settings, "time-format", {
+        title: "Clock Format",
+        choices: [
+          { label: "Time Only (14:30)", value: "%H:%M" },
+          { label: "Day & Time (Tue 14:30)", value: "%a %H:%M" },
+          { label: "Date & Time (Mar 08, 14:30)", value: "%b %d, %H:%M" },
+          {
+            label: "Full Date & Time (Mar 08, 2026 14:30)",
+            value: "%b %d, %Y %H:%M",
+          },
+        ],
+      }),
+    );
 
     const weatherGroup = new Adw.PreferencesGroup({
       title: "Weather",
-      description: "Show current conditions alongside the clock in the idle pill",
+      description:
+        "Show current conditions alongside the clock in the idle pill",
     });
     page.add(weatherGroup);
 
-    weatherGroup.add(this._switchRow(settings, "show-weather", {
-      title: "Show Weather",
-      subtitle: "Display temperature and condition in the pill view",
-      icon: "weather-clear-symbolic",
-    }));
+    weatherGroup.add(
+      this._switchRow(settings, "show-weather", {
+        title: "Show Weather",
+        subtitle: "Display temperature and condition in the pill view",
+        icon: "weather-clear-symbolic",
+      }),
+    );
+
+    // Status preview row
+    const statusRow = new Adw.ActionRow({
+      title: "Current Conditions",
+      subtitle: "No location set",
+    });
+    const statusIcon = new Gtk.Image({
+      icon_name: "weather-few-clouds-symbolic",
+      pixel_size: 24,
+      margin_end: 6,
+    });
+    statusRow.add_prefix(statusIcon);
+    weatherGroup.add(statusRow);
+
+    this._weatherClient.start((data) => {
+      statusRow.set_title(`${data.temp} — ${data.icon}`);
+      statusRow.set_subtitle(
+        `Current conditions in ${settings.get_string("weather-location") || "your local area"}`,
+      );
+    });
+
+    const refreshPreview = () => this._weatherClient.refresh();
+    const locSigId = settings.connect(
+      "changed::weather-location",
+      refreshPreview,
+    );
+    const unitSigId = settings.connect(
+      "changed::weather-units",
+      refreshPreview,
+    );
+    page.connect("destroy", () => {
+      settings.disconnect(locSigId);
+      settings.disconnect(unitSigId);
+    });
 
     const locationRow = new Adw.EntryRow({
-      title: "Search / Custom Location",
+      title: "Location",
       show_apply_button: true,
+      text: settings.get_string("weather-location") || "",
     });
-    locationRow.add_prefix(new Gtk.Image({
-      icon_name: "system-search-symbolic",
+    locationRow.add_prefix(
+      new Gtk.Image({
+        icon_name: "find-location-symbolic",
+        valign: Gtk.Align.CENTER,
+      }),
+    );
+
+    // Spinner for search activity
+    const searchSpinner = new Gtk.Spinner({
       valign: Gtk.Align.CENTER,
       margin_end: 6,
-    }));
-    settings.bind("weather-location", locationRow, "text", Gio.SettingsBindFlags.DEFAULT);
+    });
+    locationRow.add_suffix(searchSpinner);
     weatherGroup.add(locationRow);
 
-    // Live search results list directly in the group
-    const listbox = new Gtk.ListBox({
+    // Results container (integrated into the same group)
+    const resultsBox = new Gtk.ListBox({
       selection_mode: Gtk.SelectionMode.NONE,
       visible: false,
     });
-    listbox.add_css_class("boxed-list");
-    listbox.margin_top = 6;
-    weatherGroup.add(listbox);
+    resultsBox.add_css_class("boxed-list");
+    resultsBox.margin_bottom = 12;
+    weatherGroup.add(resultsBox);
 
     let searchTimeoutId = 0;
     locationRow.connect("changed", () => {
@@ -250,63 +433,90 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         GLib.Source.remove(searchTimeoutId);
         searchTimeoutId = 0;
       }
+
       if (text.length < 1) {
-        listbox.hide();
-        // Clear result rows
-        let child = listbox.get_first_child();
-        while (child) {
-          listbox.remove(child);
-          child = listbox.get_first_child();
-        }
+        resultsBox.hide();
+        searchSpinner.stop();
         return;
       }
-      searchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+
+      searchSpinner.start();
+      // Increased to 1000ms to comply with Nominatim's 1 req/sec policy
+      searchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
         searchTimeoutId = 0;
-        this._weatherClient.search(text).then(results => {
-          // Clear old
-          let child = listbox.get_first_child();
-          while (child) {
-            listbox.remove(child);
-            child = listbox.get_first_child();
-          }
-          if (results.length === 0) {
-            listbox.hide();
-            return;
-          }
-          for (const res of results) {
-            const row = new Adw.ActionRow({
-              title: res.name,
-              subtitle: res.lat ? `Lat: ${res.lat}, Lon: ${res.lon}` : "",
-              activatable: true
-            });
-            row.connect("activated", () => {
-              settings.set_string("weather-location", res.city || res.name.split(",")[0].trim());
-              listbox.hide();
-            });
-            listbox.append(row);
-          }
-          listbox.show();
-        });
+        this._weatherClient
+          .search(text)
+          .then((results) => {
+            searchSpinner.stop();
+            // Clear old
+            let child = resultsBox.get_first_child();
+            while (child) {
+              resultsBox.remove(child);
+              child = resultsBox.get_first_child();
+            }
+
+            if (!results || results.length === 0) {
+              const noRes = new Adw.ActionRow({ title: "No locations found" });
+              resultsBox.append(noRes);
+              resultsBox.show();
+              return;
+            }
+
+            for (const res of results) {
+              const row = new Adw.ActionRow({
+                title: res.name,
+                subtitle: res.city
+                  ? `City: ${res.city}`
+                  : "Select this location",
+                activatable: true,
+              });
+              row.add_prefix(new Gtk.Image({ icon_name: "go-next-symbolic" }));
+              row.connect("activated", () => {
+                const finalLoc = res.city || res.name.split(",")[0].trim();
+                settings.set_string("weather-location", finalLoc);
+                locationRow.set_text(finalLoc);
+                resultsBox.hide();
+              });
+              resultsBox.append(row);
+            }
+            resultsBox.show();
+          })
+          .catch(() => searchSpinner.stop());
         return GLib.SOURCE_REMOVE;
       });
     });
 
-    weatherGroup.add(this._comboRow(settings, "weather-units", {
-      title: "Units",
-      choices: [
-        { label: "Metric (°C)",   value: "metric"   },
-        { label: "Imperial (°F)", value: "imperial" },
-      ],
-    }));
+    locationRow.connect("apply", () => {
+      settings.set_string("weather-location", locationRow.get_text().trim());
+      resultsGroup.hide();
+    });
+
+    // Sync back if changed elsewhere
+    const watchLocId = settings.connect("changed::weather-location", () => {
+      locationRow.set_text(settings.get_string("weather-location"));
+    });
+    page.connect("destroy", () => settings.disconnect(watchLocId));
+
+    weatherGroup.add(
+      this._comboRow(settings, "weather-units", {
+        title: "Units",
+        choices: [
+          { label: "Metric (°C)", value: "metric" },
+          { label: "Imperial (°F)", value: "imperial" },
+        ],
+      }),
+    );
 
     const btGroup = new Adw.PreferencesGroup({ title: "Bluetooth" });
     page.add(btGroup);
 
-    btGroup.add(this._switchRow(settings, "show-bluetooth", {
-      title: "Show Bluetooth Indicator",
-      subtitle: "Display connected device icon and battery level in the pill",
-      icon: "bluetooth-active-symbolic",
-    }));
+    btGroup.add(
+      this._switchRow(settings, "show-bluetooth", {
+        title: "Show Bluetooth Indicator",
+        subtitle: "Display connected device icon and battery level in the pill",
+        icon: "bluetooth-active-symbolic",
+      }),
+    );
 
     const playerGroup = new Adw.PreferencesGroup({
       title: "Media Player Filter",
@@ -345,25 +555,30 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     page.add(lfmGroup);
 
-    lfmGroup.add(this._switchRow(settings, "lastfm-enabled", {
-      title: "Enable Last.fm Scrobbling",
-    }));
+    lfmGroup.add(
+      this._switchRow(settings, "lastfm-enabled", {
+        title: "Enable Last.fm Scrobbling",
+      }),
+    );
 
     for (const [key, title] of [
-      ["lastfm-username",   "Username"   ],
-      ["lastfm-api-key",    "API Key"    ],
-      ["lastfm-api-secret", "API Secret" ],
-      ["lastfm-session-key","Session Key"],
+      ["lastfm-username", "Username"],
+      ["lastfm-api-key", "API Key"],
+      ["lastfm-api-secret", "API Secret"],
+      ["lastfm-session-key", "Session Key"],
     ]) {
       const row = new Adw.EntryRow({ title });
       settings.bind(key, row, "text", Gio.SettingsBindFlags.DEFAULT);
       lfmGroup.add(row);
     }
 
-    lfmGroup.add(new Adw.ActionRow({
-      title: "How to get a session key",
-      subtitle: "Use auth.getMobileSession via the Last.fm API with your API key + secret",
-    }));
+    lfmGroup.add(
+      new Adw.ActionRow({
+        title: "How to get a session key",
+        subtitle:
+          "Use auth.getMobileSession via the Last.fm API with your API key + secret",
+      }),
+    );
 
     const lbGroup = new Adw.PreferencesGroup({
       title: "ListenBrainz",
@@ -371,18 +586,27 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     page.add(lbGroup);
 
-    lbGroup.add(this._switchRow(settings, "listenbrainz-enabled", {
-      title: "Enable ListenBrainz Scrobbling",
-    }));
+    lbGroup.add(
+      this._switchRow(settings, "listenbrainz-enabled", {
+        title: "Enable ListenBrainz Scrobbling",
+      }),
+    );
 
     const lbToken = new Adw.EntryRow({ title: "User Token" });
-    settings.bind("listenbrainz-token", lbToken, "text", Gio.SettingsBindFlags.DEFAULT);
+    settings.bind(
+      "listenbrainz-token",
+      lbToken,
+      "text",
+      Gio.SettingsBindFlags.DEFAULT,
+    );
     lbGroup.add(lbToken);
 
-    lbGroup.add(new Adw.ActionRow({
-      title: "Get your token",
-      subtitle: "Visit listenbrainz.org → Profile → API Keys",
-    }));
+    lbGroup.add(
+      new Adw.ActionRow({
+        title: "Get your token",
+        subtitle: "Visit listenbrainz.org → Profile → API Keys",
+      }),
+    );
 
     return page;
   }
@@ -402,11 +626,21 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     page.add(diagGroup);
 
     const wxStatusRow = new Adw.ActionRow({ title: "Weather Module" });
-    settings.bind("status-weather", wxStatusRow, "subtitle", Gio.SettingsBindFlags.GET);
+    settings.bind(
+      "status-weather",
+      wxStatusRow,
+      "subtitle",
+      Gio.SettingsBindFlags.GET,
+    );
     diagGroup.add(wxStatusRow);
 
     const scrobStatusRow = new Adw.ActionRow({ title: "Scrobbling" });
-    settings.bind("status-scrobbler", scrobStatusRow, "subtitle", Gio.SettingsBindFlags.GET);
+    settings.bind(
+      "status-scrobbler",
+      scrobStatusRow,
+      "subtitle",
+      Gio.SettingsBindFlags.GET,
+    );
     diagGroup.add(scrobStatusRow);
 
     const maintenanceGroup = new Adw.PreferencesGroup({
@@ -435,7 +669,8 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
     const meta = this.metadata;
     // Avoid optional-chain (?.) inside new constructors — compute strings first.
-    const metaVersion = meta.version !== undefined ? String(meta.version) : "—";
+    const metaVersion =
+      meta.version !== undefined ? String(meta.version) : "1.0";
     const shellVer = Array.isArray(meta["shell-version"])
       ? meta["shell-version"].join(", ")
       : "46+";
@@ -449,14 +684,18 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     );
     aboutGroup.add(titleRow);
 
-    aboutGroup.add(new Adw.ActionRow({
-      title: "Author",
-      subtitle: "omarxkhalid",
-    }));
-    aboutGroup.add(new Adw.ActionRow({
-      title: "License",
-      subtitle: "GPL-2.0-or-later",
-    }));
+    aboutGroup.add(
+      new Adw.ActionRow({
+        title: "Author",
+        subtitle: "omarxkhalid",
+      }),
+    );
+    aboutGroup.add(
+      new Adw.ActionRow({
+        title: "License",
+        subtitle: "GPL-2.0-or-later",
+      }),
+    );
 
     const sourceRow = new Adw.ActionRow({
       title: "Source Code",
@@ -486,14 +725,14 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
    */
   _spinRow(settings, key, opts) {
     const o = opts || {};
-    const title    = o.title    !== undefined ? o.title    : key;
+    const title = o.title !== undefined ? o.title : key;
     const subtitle = o.subtitle !== undefined ? o.subtitle : "";
-    const digits   = o.digits   !== undefined ? o.digits   : 0;
-    const lower    = o.lower    !== undefined ? o.lower    : 0;
-    const upper    = o.upper    !== undefined ? o.upper    : 100;
-    const step     = o.step     !== undefined ? o.step     : 1;
-    const page     = o.page     !== undefined ? o.page     : step * 10;
-    const icon     = o.icon     !== undefined ? o.icon     : null;
+    const digits = o.digits !== undefined ? o.digits : 0;
+    const lower = o.lower !== undefined ? o.lower : 0;
+    const upper = o.upper !== undefined ? o.upper : 100;
+    const step = o.step !== undefined ? o.step : 1;
+    const page = o.page !== undefined ? o.page : step * 10;
+    const icon = o.icon !== undefined ? o.icon : null;
 
     const adj = new Gtk.Adjustment({
       lower,
@@ -512,9 +751,9 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
   _switchRow(settings, key, opts) {
     const o = opts || {};
-    const title    = o.title    !== undefined ? o.title    : key;
+    const title = o.title !== undefined ? o.title : key;
     const subtitle = o.subtitle !== undefined ? o.subtitle : "";
-    const icon     = o.icon     !== undefined ? o.icon     : null;
+    const icon = o.icon !== undefined ? o.icon : null;
 
     const rowProps = { title, subtitle };
     if (icon) rowProps.icon_name = icon;
@@ -526,7 +765,7 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
   _comboRow(settings, key, opts) {
     const o = opts || {};
-    const title   = o.title   !== undefined ? o.title   : key;
+    const title = o.title !== undefined ? o.title : key;
     const choices = o.choices !== undefined ? o.choices : [];
 
     const model = new Gtk.StringList();
