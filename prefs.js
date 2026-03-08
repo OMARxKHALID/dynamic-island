@@ -289,26 +289,128 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       }),
     );
 
-    const playerGroup = new Adw.PreferencesGroup({
-      title: "Media Player Filter",
-      description: "Block specific players from triggering the island",
+    // ── File Stash ────────────────────────────────────────────────────────
+    const stashGroup = new Adw.PreferencesGroup({
+      title: "File Stash",
+      description:
+        "Stash files from Nautilus and move or copy them to any folder — " +
+        "right-click selected files → \"Stash in Island\", then navigate to destination.",
     });
-    page.add(playerGroup);
-    const blocklistRow = new Adw.EntryRow({
-      title: 'Blocked Players (comma-separated, e.g. "firefox, chromium")',
+    page.add(stashGroup);
+
+    const stashEnabledRow = this._switchRow(settings, "stash-enabled", {
+      title: "Enable File Stash",
+      subtitle: "Register the D-Bus service so Nautilus can send files to the island",
+      icon: "folder-drag-accept-symbolic",
     });
-    blocklistRow.set_text(settings.get_strv("player-blocklist").join(", "));
-    blocklistRow.connect("changed", () => {
-      const list = blocklistRow
-        .get_text()
-        .split(",")
-        .map((x) => x.trim().toLowerCase())
-        .filter(Boolean);
-      settings.set_strv("player-blocklist", list);
+    stashGroup.add(stashEnabledRow);
+
+    const autoClearRow = this._switchRow(settings, "stash-auto-clear", {
+      title: "Clear After Move / Copy",
+      subtitle: "Automatically empty the stash once the operation completes",
+      icon: "edit-clear-all-symbolic",
     });
-    playerGroup.add(blocklistRow);
+    stashGroup.add(autoClearRow);
+
+    const notifyRow = this._switchRow(settings, "stash-notify-on-complete", {
+      title: "Notify on Complete",
+      subtitle: "Show a desktop notification confirming success or reporting an error",
+      icon: "preferences-system-notifications-symbolic",
+    });
+    stashGroup.add(notifyRow);
+
+    // Dim sub-options when stash is disabled
+    const updateStashSensitive = () => {
+      const on = settings.get_boolean("stash-enabled");
+      autoClearRow.set_sensitive(on);
+      notifyRow.set_sensitive(on);
+    };
+    updateStashSensitive();
+    const stashSigId = settings.connect("changed::stash-enabled", updateStashSensitive);
+    page.connect("destroy", () => settings.disconnect(stashSigId));
+
+    page.add(this._buildPlayerFilterGroup(settings, page));
 
     return page;
+  }
+
+  // ── Player Filtering ──────────────────────────────────────────────────────
+
+  _buildPlayerFilterGroup(settings, page) {
+    const group = new Adw.PreferencesGroup({
+      title: "Player Filter",
+      description:
+        "Ignore specific media players (e.g. 'firefox', 'chrome', 'spotify')",
+    });
+
+    const listbox = new Gtk.ListBox({
+      selection_mode: Gtk.SelectionMode.NONE,
+      css_classes: ["boxed-list"],
+    });
+    group.add(listbox);
+
+    const updateList = () => {
+      // Clear current rows
+      let child = listbox.get_first_child();
+      while (child) {
+        const next = child.get_next_sibling();
+        listbox.remove(child);
+        child = next;
+      }
+
+      const blocklist = settings.get_strv("player-blocklist");
+      if (blocklist.length === 0) {
+        const emptyRow = new Adw.ActionRow({
+          title: "No players blocked",
+          subtitle: "All MPRIS players will be shown in the island",
+        });
+        listbox.append(emptyRow);
+      } else {
+        blocklist.forEach((id) => {
+          const row = new Adw.ActionRow({ title: id });
+          const delBtn = new Gtk.Button({
+            icon_name: "user-trash-symbolic",
+            valign: Gtk.Align.CENTER,
+            has_frame: false,
+            css_classes: ["flat"],
+          });
+          delBtn.connect("clicked", () => {
+            const newList = blocklist.filter((x) => x !== id);
+            settings.set_strv("player-blocklist", newList);
+          });
+          row.add_suffix(delBtn);
+          listbox.append(row);
+        });
+      }
+    };
+
+    updateList();
+    const listSigId = settings.connect(
+      "changed::player-blocklist",
+      updateList,
+    );
+    page.connect("destroy", () => settings.disconnect(listSigId));
+
+    const addRow = new Adw.EntryRow({
+      title: "Add Player Identity",
+      show_apply_button: true,
+      tooltip_text:
+        "Type the base name (e.g. 'chromium') — instance numbers are ignored automatically",
+    });
+    addRow.connect("apply", () => {
+      const val = addRow.get_text().trim().toLowerCase();
+      if (val) {
+        const list = settings.get_strv("player-blocklist");
+        if (!list.includes(val)) {
+          list.push(val);
+          settings.set_strv("player-blocklist", list);
+        }
+        addRow.set_text("");
+      }
+    });
+    group.add(addRow);
+
+    return group;
   }
 
   // ── Weather group (fully redesigned) ──────────────────────────────────────

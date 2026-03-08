@@ -111,7 +111,7 @@ export default class DynamicIslandExtension extends Extension {
     this._bluetooth.start((devices) => this._island.updateBluetooth(devices));
 
     // File Stash — D-Bus service so Nautilus can send files to the island
-    this._stash = new FileStash((files, folderUri) => {
+    this._stash = new FileStash(this._settings, (files, folderUri) => {
       this._island.updateStash(files, folderUri);
     });
     this._stash.start();
@@ -123,6 +123,18 @@ export default class DynamicIslandExtension extends Extension {
       if (action === "copy") this._stash.executeCopy();
       if (action === "clear") this._stash.clear();
     });
+
+    // React to the master stash-enabled toggle in real time (no reload needed)
+    this._stashEnabledId = this._settings.connect(
+      "changed::stash-enabled",
+      () => {
+        if (this._settings.get_boolean("stash-enabled")) {
+          this._stash?.start();
+        } else {
+          this._stash?.stop();
+        }
+      },
+    );
   }
 
   _stopIsland() {
@@ -130,10 +142,15 @@ export default class DynamicIslandExtension extends Extension {
       this._interceptId,
       this._weatherLocId,
       this._weatherUnitsId,
+      this._stashEnabledId,
     ]) {
       if (id) this._settings?.disconnect(id);
     }
-    this._interceptId = this._weatherLocId = this._weatherUnitsId = null;
+    this._interceptId =
+      this._weatherLocId =
+      this._weatherUnitsId =
+      this._stashEnabledId =
+        null;
 
     this._disableOsd();
 

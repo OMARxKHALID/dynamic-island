@@ -177,5 +177,34 @@
       <summary>Latest scrobbler module status</summary>
     </key>
 
+
+    <!-- ── File Stash ────────────────────────────────────────────────────── -->
+    <key name="stash-enabled" type="b">
+      <default>true</default>
+      <summary>Enable File Stash</summary>
+      <description>
+        Register the D-Bus service so the Nautilus companion plugin can send
+        files to the island.  When disabled the service is not started and the
+        Nautilus right-click menu items are suppressed.
+      </description>
+    </key>
+    <key name="stash-auto-clear" type="b">
+      <default>true</default>
+      <summary>Clear stash automatically after move or copy</summary>
+      <description>
+        When true the stash is emptied once a Move or Copy operation completes
+        successfully.  Set to false to keep the stash so you can repeat the
+        operation to multiple destinations.
+      </description>
+    </key>
+    <key name="stash-notify-on-complete" type="b">
+      <default>true</default>
+      <summary>Desktop notification when file operation completes</summary>
+      <description>
+        Show a notify-send notification confirming how many files were moved or
+        copied, or reporting the error message if the operation failed.
+      </description>
+    </key>
+
   </schema>
 </schemalist>

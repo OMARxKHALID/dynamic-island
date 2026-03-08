@@ -253,68 +253,67 @@
 
 /* ══════════════════════════════════════════════════════════════════════════
    FILE STASH VIEW
+   Mirrors the notification toast layout: icon left, text column right.
+   Uses the same design tokens as every other island state.
    ════════════════════════════════════════════════════════════════════════ */
 
 .di-stash-view {
-  padding: 12px 18px 14px;
+  /* identical to di-notif-view inline padding */
+  background-color: transparent;
 }
 
-/* File count + icon row */
+/* Folder icon — same treatment as di-notif-icon */
 .di-stash-icon {
   color: rgba(255, 255, 255, 0.75);
+  min-width: 26px;
+  min-height: 26px;
 }
 
+/* "FILE STASH" micro-label — identical to di-notif-app */
+.di-stash-category {
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* Item count — identical to di-notif-title */
 .di-stash-count {
   font-size: 13px;
   font-weight: 700;
   color: #ffffff;
 }
 
-/* Destination folder label */
+/* Destination folder — identical to di-notif-body */
 .di-stash-dest {
   font-size: 11px;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.52);
 }
 
-/* Action buttons */
-.di-stash-btn {
-  background-color: rgba(255, 255, 255, 0.12);
+/* Move / Copy action pills
+   Small, inline, understated — consistent with the island's monochrome palette.
+   Not full-width blocks; they sit left-aligned in a row like iOS action chips. */
+.di-stash-action {
+  background-color: rgba(255, 255, 255, 0.1);
   border: none;
-  border-radius: 8px;
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #ffffff;
-}
-
-.di-stash-btn:hover {
-  background-color: rgba(255, 255, 255, 0.22);
-}
-
-.di-stash-btn:active {
-  background-color: rgba(255, 255, 255, 0.08);
-}
-
-/* Disabled state — when no destination folder is known yet */
-.di-stash-btn:insensitive {
-  background-color: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.25);
-}
-
-/* The ✕ (clear) dismiss button — subtle, tucked to the right */
-.di-stash-btn-clear {
-  background-color: transparent;
-  color: rgba(255, 255, 255, 0.35);
-  padding: 5px 8px;
+  border-radius: 999px;
+  padding: 4px 12px;
   font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
 }
 
-.di-stash-btn-clear:hover {
-  background-color: rgba(255, 60, 60, 0.25);
-  color: rgba(255, 130, 130, 0.9);
+.di-stash-action:hover {
+  background-color: rgba(255, 255, 255, 0.18);
 }
 
-.di-stash-btn-clear:active {
-  background-color: rgba(255, 60, 60, 0.12);
+.di-stash-action:active {
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+/* Disabled — folder not yet known */
+.di-stash-action:insensitive {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.22);
 }

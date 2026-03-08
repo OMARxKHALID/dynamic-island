@@ -789,66 +789,101 @@ export class IslandCore {
   }
 
   _buildStashView() {
+    // Mirror the notification view layout exactly:
+    // [folder icon]  [text column + action row]
+    // This keeps stash visually consistent with every other island state.
     const scale = this._scale;
 
-    const box = new St.BoxLayout({
+    const outer = new St.BoxLayout({
       style_class: "di-stash-view",
-      vertical: true,
+      vertical: false,
       x_expand: true,
       y_expand: true,
       y_align: Clutter.ActorAlign.CENTER,
-      style: `spacing: ${Math.floor(10 * scale)}px;`,
+      style: `spacing: ${Math.floor(12 * scale)}px; padding: 0 ${Math.floor(16 * scale)}px;`,
     });
 
-    // ── Top row: icon + count label ──────────────────────────────────────────
-    const topRow = new St.BoxLayout({
+    // ── Left: folder icon (same treatment as di-notif-icon) ─────────────────
+    this._stashIcon = new St.Icon({
+      style_class: "di-stash-icon",
+      icon_name: "folder-drag-accept-symbolic",
+      icon_size: Math.floor(26 * scale),
+      x_align: Clutter.ActorAlign.CENTER,
+      y_align: Clutter.ActorAlign.CENTER,
+    });
+
+    // ── Right: text column ───────────────────────────────────────────────────
+    const col = new St.BoxLayout({
+      vertical: true,
+      x_expand: true,
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `spacing: ${Math.floor(2 * scale)}px;`,
+    });
+
+    // Header row — category label + dismiss button
+    const headerRow = new St.BoxLayout({
       vertical: false,
       x_expand: true,
       y_align: Clutter.ActorAlign.CENTER,
-      style: `spacing: ${Math.floor(8 * scale)}px;`,
     });
 
-    this._stashIcon = new St.Icon({
-      style_class: "di-stash-icon",
-      icon_name: "folder-copy-symbolic",
-      icon_size: Math.floor(16 * scale),
-      y_align: Clutter.ActorAlign.CENTER,
+    const categoryLabel = new St.Label({
+      style_class: "di-stash-category",
+      text: "FILE STASH",
+      x_expand: true,
+      style: this._getFont(9),
     });
 
+    // ✕ dismiss — identical to di-ctrl-btn so it reads as part of the island
+    this._stashClearBtn = new St.Button({
+      style_class: "di-ctrl-btn",
+      reactive: true,
+      accessible_name: "Clear stash",
+    });
+    this._stashClearBtn.set_child(
+      new St.Icon({
+        style_class: "di-ctrl-icon",
+        icon_name: "window-close-symbolic",
+        icon_size: Math.floor(12 * scale),
+      }),
+    );
+    this._stashClearBtn.connect("clicked", () => {
+      this._stashActionCallback?.("clear");
+      return Clutter.EVENT_STOP;
+    });
+
+    headerRow.add_child(categoryLabel);
+    headerRow.add_child(this._stashClearBtn);
+
+    // Count — same weight/size as di-notif-title
     this._stashCountLabel = new St.Label({
       style_class: "di-stash-count",
-      text: "0 files stashed",
-      y_align: Clutter.ActorAlign.CENTER,
+      text: "0 items",
       style: this._getFont(13),
-      x_expand: true,
     });
     this._stashCountLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
-    topRow.add_child(this._stashIcon);
-    topRow.add_child(this._stashCountLabel);
-
-    // ── Destination row ──────────────────────────────────────────────────────
+    // Destination — same treatment as di-notif-body
     this._stashDestLabel = new St.Label({
       style_class: "di-stash-dest",
-      text: "Navigate to destination in Nautilus",
-      x_expand: true,
+      text: "Open a folder in Nautilus",
       style: this._getFont(11),
     });
     this._stashDestLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
 
-    // ── Action buttons row ───────────────────────────────────────────────────
-    const btnRow = new St.BoxLayout({
+    // ── Action pills row ─────────────────────────────────────────────────────
+    // Small inline pill buttons — not full-width blocks
+    const actionRow = new St.BoxLayout({
       vertical: false,
       x_expand: true,
-      x_align: Clutter.ActorAlign.CENTER,
-      style: `spacing: ${Math.floor(6 * scale)}px;`,
+      style: `spacing: ${Math.floor(5 * scale)}px; margin-top: ${Math.floor(4 * scale)}px;`,
     });
 
     this._stashMoveBtn = new St.Button({
-      label: "Move here",
-      style_class: "di-stash-btn",
+      label: "Move",
+      style_class: "di-stash-action",
       can_focus: true,
-      reactive: true,
+      reactive: false, // enabled once a folder is known
     });
     this._stashMoveBtn.connect("clicked", () => {
       this._stashActionCallback?.("move");
@@ -856,37 +891,27 @@ export class IslandCore {
     });
 
     this._stashCopyBtn = new St.Button({
-      label: "Copy here",
-      style_class: "di-stash-btn",
+      label: "Copy",
+      style_class: "di-stash-action",
       can_focus: true,
-      reactive: true,
+      reactive: false,
     });
     this._stashCopyBtn.connect("clicked", () => {
       this._stashActionCallback?.("copy");
       return Clutter.EVENT_STOP;
     });
 
-    this._stashClearBtn = new St.Button({
-      label: "✕",
-      style_class: "di-stash-btn di-stash-btn-clear",
-      can_focus: true,
-      reactive: true,
-    });
-    this._stashClearBtn.connect("clicked", () => {
-      this._stashActionCallback?.("clear");
-      return Clutter.EVENT_STOP;
-    });
+    actionRow.add_child(this._stashMoveBtn);
+    actionRow.add_child(this._stashCopyBtn);
 
-    btnRow.add_child(this._stashMoveBtn);
-    btnRow.add_child(this._stashCopyBtn);
-    btnRow.add_child(new St.Widget({ x_expand: true }));
-    btnRow.add_child(this._stashClearBtn);
+    col.add_child(headerRow);
+    col.add_child(this._stashCountLabel);
+    col.add_child(this._stashDestLabel);
+    col.add_child(actionRow);
 
-    box.add_child(topRow);
-    box.add_child(this._stashDestLabel);
-    box.add_child(btnRow);
-
-    return box;
+    outer.add_child(this._stashIcon);
+    outer.add_child(col);
+    return outer;
   }
 
   _makeCtrlBtn(iconName, accessibleName, onClicked) {
@@ -1591,23 +1616,25 @@ export class IslandCore {
     if (!this._stashCountLabel) return;
 
     const n = files.length;
-    this._stashCountLabel.set_text(`${n} file${n !== 1 ? "s" : ""} stashed`);
+    this._stashCountLabel.set_text(`${n} item${n !== 1 ? "s" : ""}`);
 
-    if (folderUri) {
-      // Show just the last path segment as the destination name
+    const hasFolder = !!folderUri;
+
+    if (hasFolder) {
       const parts = folderUri.replace(/\/$/, "").split("/");
       const folderName = decodeURIComponent(
         parts[parts.length - 1] || folderUri,
       );
       this._stashDestLabel?.set_text(`→ ${folderName}`);
-      // Enable move/copy buttons now that we have a destination
-      if (this._stashMoveBtn) this._stashMoveBtn.reactive = true;
-      if (this._stashCopyBtn) this._stashCopyBtn.reactive = true;
     } else {
-      this._stashDestLabel?.set_text("Navigate to destination in Nautilus");
-      // Disable move/copy buttons until destination is known
-      if (this._stashMoveBtn) this._stashMoveBtn.reactive = false;
-      if (this._stashCopyBtn) this._stashCopyBtn.reactive = false;
+      this._stashDestLabel?.set_text("Open a folder in Nautilus");
+    }
+
+    // Move/Copy pills: reactive + full opacity when folder known, dimmed otherwise
+    for (const btn of [this._stashMoveBtn, this._stashCopyBtn]) {
+      if (!btn) continue;
+      btn.reactive = hasFolder;
+      btn.opacity = hasFolder ? 255 : 80;
     }
   }
 

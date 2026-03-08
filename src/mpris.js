@@ -161,7 +161,9 @@ export const MprisWatcher = GObject.registerClass(
      */
     _busNameToIdentity(busName) {
       let id = busName.slice(MPRIS_BUS_PREFIX.length).toLowerCase();
-      // Strip trailing .instance<digits> segments
+      // Strip trailing .instance<digits> or .<digits> segments
+      // Chromium/Chrome use .instance1234, others use .1234
+      id = id.replace(/\.instance[0-9]+$/, "");
       id = id.replace(/(\.[0-9]+)+$/, "");
       return id;
     }
