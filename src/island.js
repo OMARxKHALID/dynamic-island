@@ -818,17 +818,58 @@ export class IslandCore {
 
   // ── Size Calculation Helpers ────────────────────────────────────────────────
 
-  _getPillW() { return Math.floor((this._settings.get_int("pill-width") || PILL_W) * this._scale); }
-  _getPillH() { return Math.floor((this._settings.get_int("pill-height") || PILL_H) * this._scale); }
-  _getCompactW() { return Math.floor((this._settings.get_int("compact-width") || COMPACT_W) * this._scale); }
-  _getCompactH() { return Math.floor((this._settings.get_int("compact-height") || COMPACT_H) * this._scale); }
-  _getExpandedW() { return Math.floor((this._settings.get_int("expanded-width") || EXPANDED_W) * this._scale); }
-  _getExpandedH() { return Math.floor((this._settings.get_int("expanded-height") || EXPANDED_H) * this._scale); }
-  _getOsdW() { return Math.floor((this._settings.get_int("osd-width") || OSD_W) * this._scale); }
-  _getOsdH() { return Math.floor((this._settings.get_int("osd-height") || OSD_H) * this._scale); }
+  _getPillW() {
+    return Math.floor(
+      (this._settings.get_int("pill-width") || PILL_W) * this._scale,
+    );
+  }
+  _getPillH() {
+    return Math.floor(
+      (this._settings.get_int("pill-height") || PILL_H) * this._scale,
+    );
+  }
+  _getCompactW() {
+    return Math.floor(
+      (this._settings.get_int("compact-width") || COMPACT_W) * this._scale,
+    );
+  }
+  _getCompactH() {
+    return Math.floor(
+      (this._settings.get_int("compact-height") || COMPACT_H) * this._scale,
+    );
+  }
+  _getExpandedW() {
+    return Math.floor(
+      (this._settings.get_int("expanded-width") || EXPANDED_W) * this._scale,
+    );
+  }
+  _getExpandedH() {
+    return Math.floor(
+      (this._settings.get_int("expanded-height") || EXPANDED_H) * this._scale,
+    );
+  }
+  _getOsdW() {
+    return Math.floor(
+      (this._settings.get_int("osd-width") || OSD_W) * this._scale,
+    );
+  }
+  _getOsdH() {
+    return Math.floor(
+      (this._settings.get_int("osd-height") || OSD_H) * this._scale,
+    );
+  }
 
-  _getArtExpandedSize() { return Math.floor((this._settings.get_int("art-expanded-size") || ART_EXPANDED) * this._scale); }
-  _getArtCompactSize() { return Math.floor((this._settings.get_int("art-compact-size") || ART_COMPACT) * this._scale); }
+  _getArtExpandedSize() {
+    return Math.floor(
+      (this._settings.get_int("art-expanded-size") || ART_EXPANDED) *
+        this._scale,
+    );
+  }
+  _getArtCompactSize() {
+    return Math.floor(
+      (this._settings.get_int("art-compact-size") || ART_COMPACT) * this._scale,
+    );
+  }
 
   _repositionForSize(width) {
     const monitor = Main.layoutManager.primaryMonitor;
@@ -868,12 +909,23 @@ export class IslandCore {
     const scale = this._scale;
     let baseH;
     switch (currentState) {
-      case State.PILL: baseH = this._getPillH(); break;
-      case State.COMPACT: baseH = this._getCompactH(); break;
-      case State.EXPANDED: baseH = this._getExpandedH(); break;
-      case State.OSD: baseH = this._getOsdH(); break;
-      case State.NOTIF: baseH = Math.floor(NOTIF_H * scale); break;
-      default: baseH = this._getPillH();
+      case State.PILL:
+        baseH = this._getPillH();
+        break;
+      case State.COMPACT:
+        baseH = this._getCompactH();
+        break;
+      case State.EXPANDED:
+        baseH = this._getExpandedH();
+        break;
+      case State.OSD:
+        baseH = this._getOsdH();
+        break;
+      case State.NOTIF:
+        baseH = Math.floor(NOTIF_H * scale);
+        break;
+      default:
+        baseH = this._getPillH();
     }
     this._updateNotchStyle(baseH, currentState);
 
@@ -1120,8 +1172,16 @@ export class IslandCore {
     this._playing = status === "Playing";
 
     const currentTrackId = meta["mpris:trackid"]?.unpack() ?? null;
-    const trackChanged = currentTrackId !== this._lastTrackId;
-    if (trackChanged) this._lastTrackId = currentTrackId;
+    const trackChanged =
+      currentTrackId !== this._lastTrackId ||
+      title !== this._lastTitle ||
+      artist !== this._lastArtist;
+
+    if (trackChanged) {
+      this._lastTrackId = currentTrackId;
+      this._lastTitle = title;
+      this._lastArtist = artist;
+    }
 
     this._titleLabel.set_text(title);
     this._titleLabel.visible = title.length > 0;
@@ -1154,6 +1214,9 @@ export class IslandCore {
       } else if (!wasPlaying) {
         // Resumed from pause — re-anchor without resetting position to 0
         this._seekTracker.start(proxy, newLength);
+      } else {
+        // Still same track, but duration might have changed (e.g. buffering finished)
+        this._seekTracker.updateLength(newLength);
       }
       // else: still playing same track — leave tracker alone so the progress
       // bar does NOT snap back to 0 on every property-changed event (volume,
@@ -1161,6 +1224,12 @@ export class IslandCore {
       this._startWaveform();
       this._cancelAutoHide();
     } else {
+      if (trackChanged) {
+        // Track was switched while paused (e.g. user clicked 'Next' physically).
+        // Must hard-reset the tracker so it interpolates from 0 rather than
+        // the old track's advanced location.
+        this._seekTracker.reset(proxy, newLength);
+      }
       this._seekTracker.stop();
       this._stopWaveform();
       this._resetAutoHideTimer();
@@ -1177,13 +1246,20 @@ export class IslandCore {
     } else {
       if (this._state === State.COMPACT || this._state === State.EXPANDED) {
         if (!this._collapseTimeoutId) {
-          this._collapseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
-            this._collapseTimeoutId = null;
-            if (this._state === State.COMPACT || this._state === State.EXPANDED) {
-              this._transitionTo(State.PILL);
-            }
-            return GLib.SOURCE_REMOVE;
-          });
+          this._collapseTimeoutId = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT,
+            800,
+            () => {
+              this._collapseTimeoutId = null;
+              if (
+                this._state === State.COMPACT ||
+                this._state === State.EXPANDED
+              ) {
+                this._transitionTo(State.PILL);
+              }
+              return GLib.SOURCE_REMOVE;
+            },
+          );
         }
       }
     }
@@ -1203,6 +1279,8 @@ export class IslandCore {
     this._playing = false;
     this._dominantColor = null;
     this._lastTrackId = null;
+    this._lastTitle = null;
+    this._lastArtist = null;
     this._trackLength = 0;
 
     if (this._collapseTimeoutId) {
@@ -1381,7 +1459,9 @@ export class IslandCore {
       this._showActor(100);
       this._transitionTo(State.OSD, () => {
         if (isBright && this._pendingBrightnessFill !== null) {
-          const bgW = this._osdSmoothBg.get_width() || Math.floor(this._getOsdW() - (40 * scale));
+          const bgW =
+            this._osdSmoothBg.get_width() ||
+            Math.floor(this._getOsdW() - 40 * scale);
           this._osdSmoothFill.set_width(
             Math.floor(bgW * this._pendingBrightnessFill),
           );
@@ -1389,7 +1469,9 @@ export class IslandCore {
         }
       });
     } else if (isBright) {
-      const bgW = this._osdSmoothBg.get_width() || Math.floor(this._getOsdW() - (40 * scale));
+      const bgW =
+        this._osdSmoothBg.get_width() ||
+        Math.floor(this._getOsdW() - 40 * scale);
       this._osdSmoothFill.set_width(
         Math.floor(bgW * (clamped / (maxLevel || 1))),
       );
