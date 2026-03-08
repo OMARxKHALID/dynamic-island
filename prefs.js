@@ -74,6 +74,27 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       lower: 0.5, upper: 3.0, step: 0.05, page: 0.1, digits: 2,
     }));
 
+    const dimensionsGroup = new Adw.PreferencesGroup({
+      title: "Dimensions",
+      description: "Customise the exact pixel sizes of each state (base size before scaling)",
+    });
+    page.add(dimensionsGroup);
+
+    dimensionsGroup.add(this._spinRow(settings, "pill-width", { title: "Idle Width", lower: 50, upper: 800, step: 5 }));
+    dimensionsGroup.add(this._spinRow(settings, "pill-height", { title: "Idle Height", lower: 20, upper: 200, step: 2 }));
+
+    dimensionsGroup.add(this._spinRow(settings, "compact-width", { title: "Compact Width (Waveform)", lower: 50, upper: 800, step: 5 }));
+    dimensionsGroup.add(this._spinRow(settings, "compact-height", { title: "Compact Height", lower: 20, upper: 200, step: 2 }));
+
+    dimensionsGroup.add(this._spinRow(settings, "expanded-width", { title: "Expanded Width (Media Player)", lower: 150, upper: 800, step: 5 }));
+    dimensionsGroup.add(this._spinRow(settings, "expanded-height", { title: "Expanded Height", lower: 50, upper: 500, step: 5 }));
+
+    dimensionsGroup.add(this._spinRow(settings, "osd-width", { title: "OSD Width (Volume/Brightness)", lower: 100, upper: 800, step: 5 }));
+    dimensionsGroup.add(this._spinRow(settings, "osd-height", { title: "OSD Height", lower: 50, upper: 300, step: 2 }));
+
+    dimensionsGroup.add(this._spinRow(settings, "art-expanded-size", { title: "Expanded Cover Art Size", lower: 20, upper: 300, step: 2 }));
+    dimensionsGroup.add(this._spinRow(settings, "art-compact-size", { title: "Compact Cover Art Size", lower: 10, upper: 100, step: 2 }));
+
     const styleGroup = new Adw.PreferencesGroup({
       title: "Colors & Transparency",
       description: "Fine-tune the island appearance",
@@ -130,7 +151,9 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       delayRow.set_sensitive(settings.get_boolean("auto-hide"));
     };
     updateDelayRow();
-    settings.connect("changed::auto-hide", updateDelayRow);
+    const autoHideSigId = settings.connect("changed::auto-hide", updateDelayRow);
+    // Disconnect when the preferences window is closed
+    page.connect("destroy", () => settings.disconnect(autoHideSigId));
 
     generalGroup.add(this._switchRow(settings, "intercept-osd", {
       title: "System Volume / Brightness OSD",
@@ -173,9 +196,14 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     }));
 
     const locationRow = new Adw.EntryRow({
-      title: "Location",
+      title: "Search / Custom Location",
       show_apply_button: true,
     });
+    locationRow.add_prefix(new Gtk.Image({
+      icon_name: "system-search-symbolic",
+      valign: Gtk.Align.CENTER,
+      margin_end: 6,
+    }));
     settings.bind("weather-location", locationRow, "text", Gio.SettingsBindFlags.DEFAULT);
     weatherGroup.add(locationRow);
 
@@ -282,6 +310,20 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       title: "System",
       icon_name: "preferences-system-symbolic",
     });
+
+    const diagGroup = new Adw.PreferencesGroup({
+      title: "Diagnostics",
+      description: "Check the status of background services",
+    });
+    page.add(diagGroup);
+
+    const wxStatusRow = new Adw.ActionRow({ title: "Weather Module" });
+    settings.bind("status-weather", wxStatusRow, "subtitle", Gio.SettingsBindFlags.GET);
+    diagGroup.add(wxStatusRow);
+
+    const scrobStatusRow = new Adw.ActionRow({ title: "Scrobbling" });
+    settings.bind("status-scrobbler", scrobStatusRow, "subtitle", Gio.SettingsBindFlags.GET);
+    diagGroup.add(scrobStatusRow);
 
     const maintenanceGroup = new Adw.PreferencesGroup({
       title: "Maintenance",
@@ -419,11 +461,13 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         settings.set_string(key, values[sel]);
     });
 
-    settings.connect("changed::" + key, () => {
+    // Track the signal ID so it is freed when the row is destroy()ed
+    const sigId = settings.connect("changed::" + key, () => {
       const newIdx = values.indexOf(settings.get_string(key));
       if (newIdx >= 0 && newIdx !== row.get_selected())
         row.set_selected(newIdx);
     });
+    row.connect("destroy", () => settings.disconnect(sigId));
 
     return row;
   }

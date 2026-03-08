@@ -135,7 +135,7 @@ export class SeekTracker {
     this._pressId = this._seekHit.connect("button-press-event", (_a, ev) => {
       if (ev.get_button() !== 1) return Clutter.EVENT_PROPAGATE;
       this._dragging = true;
-      this._seekToEvent(ev);
+      this._seekToEvent(ev, false); // visually update only, do not commit
       this._connectGlobalDrag(); // capture motion + release globally
       return Clutter.EVENT_STOP;
     });
@@ -242,6 +242,7 @@ export class SeekTracker {
       SEEK_TICK_S,
       () => {
         if (!this._proxy) return GLib.SOURCE_REMOVE;
+        if (this._dragging) return GLib.SOURCE_CONTINUE; // do not fight user drag
         // Tick uses pure local-clock interpolation only.
         // _fetchPosition is NOT called here — that prevents stale D-Bus
         // responses from overwriting a freshly-set seek anchor.
@@ -343,7 +344,7 @@ export class SeekTracker {
 
   // ── Private — seek ─────────────────────────────────────────────────────────
 
-  _seekToEvent(ev) {
+  _seekToEvent(ev, commit = true) {
     if (!this._proxy || !this._seekBg || this._lengthSecs <= 0) return;
 
     // ev.get_coords() → [x, y] in GJS (no boolean ok flag)
@@ -355,6 +356,11 @@ export class SeekTracker {
 
     const ratio = Math.max(0, Math.min((evX - bgX) / bgW, 1));
     const targetSecs = ratio * this._lengthSecs;
+
+    if (!commit) {
+      this._updateUI(targetSecs);
+      return;
+    }
 
     // Increment generation — any in-flight position fetch is now stale
     this._fetchGen++;
@@ -496,7 +502,7 @@ export class SeekTracker {
     this._globalMotionId = global.stage.connect(
       "motion-event",
       (_stage, ev) => {
-        if (this._dragging) this._seekToEvent(ev);
+        if (this._dragging) this._seekToEvent(ev, false); // visually update only
         return Clutter.EVENT_PROPAGATE;
       },
     );
@@ -506,7 +512,7 @@ export class SeekTracker {
       "button-release-event",
       (_stage, ev) => {
         if (this._dragging) {
-          this._seekToEvent(ev);
+          this._seekToEvent(ev, true); // commit seek on release!
           this._dragging = false;
         }
         this._disconnectGlobalDrag();

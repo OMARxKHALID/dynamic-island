@@ -93,6 +93,13 @@ export class Scrobbler {
 
   // ── Internal state management ─────────────────────────────────────────────
 
+  _setStatus(msg) {
+    if (!this._settings) return;
+    try {
+      this._settings.set_string("status-scrobbler", msg);
+    } catch (_e) {}
+  }
+
   _getSession() {
     if (!this._session)
       this._session = new Soup.Session({ timeout: 15 });
@@ -167,8 +174,12 @@ export class Scrobbler {
     if (album) params.album = album;
     if (durationSecs > 0) params.duration = String(Math.floor(durationSecs));
     this._lastfmPost(params, (err) => {
-      if (err)
+      if (err) {
         console.warn("DynamicIsland/Scrobbler: Last.fm now-playing failed:", err.message);
+        this._setStatus("Last.fm now-playing failed: " + err.message);
+      } else {
+        this._setStatus(`Last.fm playing: "${title}"`);
+      }
     });
   }
 
@@ -184,10 +195,13 @@ export class Scrobbler {
     if (durationSecs > 0)
       params["duration[0]"] = String(Math.floor(durationSecs));
     this._lastfmPost(params, (err) => {
-      if (err)
+      if (err) {
         console.warn("DynamicIsland/Scrobbler: Last.fm scrobble failed:", err.message);
-      else
+        this._setStatus("Last.fm scrobble failed: " + err.message);
+      } else {
         console.log(`DynamicIsland/Scrobbler: Last.fm scrobbled "${title}"`);
+        this._setStatus(`Last.fm scrobbled: "${title}"`);
+      }
     });
   }
 
@@ -247,7 +261,13 @@ export class Scrobbler {
     meta.additional_info = { listening_from: "dynamic-island-gnome" };
     if (durationSecs > 0)
       meta.additional_info.duration = Math.floor(durationSecs);
-    this._lbPost("playing_now", { track_metadata: meta });
+    this._lbPost("playing_now", { track_metadata: meta }, (err) => {
+      if (err) {
+        this._setStatus("ListenBrainz now-playing failed: " + err.message);
+      } else {
+        this._setStatus(`ListenBrainz playing: "${title}"`);
+      }
+    });
   }
 
   _lbScrobble({ title, artist, album, durationSecs, startedAt }) {
@@ -259,11 +279,17 @@ export class Scrobbler {
     if (album) meta.release_name = album;
     if (durationSecs > 0)
       meta.additional_info.duration = Math.floor(durationSecs);
-    this._lbPost("single", { listened_at: startedAt, track_metadata: meta });
-    console.log(`DynamicIsland/Scrobbler: ListenBrainz scrobbled "${title}"`);
+    this._lbPost("single", { listened_at: startedAt, track_metadata: meta }, (err) => {
+      if (err) {
+        this._setStatus("ListenBrainz scrobble failed: " + err.message);
+      } else {
+        console.log(`DynamicIsland/Scrobbler: ListenBrainz scrobbled "${title}"`);
+        this._setStatus(`ListenBrainz scrobbled: "${title}"`);
+      }
+    });
   }
 
-  _lbPost(listenType, payload) {
+  _lbPost(listenType, payload, callback) {
     const token = this._settings?.get_string("listenbrainz-token");
     if (!token) return;
 
@@ -293,9 +319,12 @@ export class Scrobbler {
       (sess, res) => {
         try {
           sess.send_and_read_finish(res);
+          if (callback) callback(null);
         } catch (e) {
-          if (!e.message?.includes("cancel"))
+          if (!e.message?.includes("cancel")) {
             console.warn("DynamicIsland/Scrobbler: ListenBrainz failed:", e.message);
+            if (callback) callback(e);
+          }
         }
       },
     );

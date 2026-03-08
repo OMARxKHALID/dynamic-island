@@ -154,5 +154,15 @@
       <summary>Album art thumbnail size in compact view (px)</summary>
     </key>
 
+    <!-- ── Diagnostics ───────────────────────────────────────────────────── -->
+    <key name="status-weather" type="s">
+      <default>'OK'</default>
+      <summary>Latest weather module status</summary>
+    </key>
+    <key name="status-scrobbler" type="s">
+      <default>'OK'</default>
+      <summary>Latest scrobbler module status</summary>
+    </key>
+
   </schema>
 </schemalist>

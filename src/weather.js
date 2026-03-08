@@ -79,10 +79,59 @@ export class WeatherClient {
 
   // ── Private ───────────────────────────────────────────────────────────────
 
+  _setStatus(msg) {
+    if (!this._settings) return;
+    try {
+      this._settings.set_string("status-weather", msg);
+    } catch (_e) {}
+  }
+
   _fetch() {
     if (!this._session || !this._settings) return;
 
-    const loc   = (this._settings.get_string("weather-location") ?? "").trim();
+    const loc = (this._settings.get_string("weather-location") ?? "").trim();
+    if (loc) {
+      this._fetchWeather(loc);
+    } else {
+      this._autoDetectLocationThenFetch();
+    }
+  }
+
+  _autoDetectLocationThenFetch() {
+    let geoMsg;
+    try {
+      // Very fast, HTTPS IP geocoding with no auth/rate-limits
+      geoMsg = Soup.Message.new("GET", "https://get.geojs.io/v1/ip/geo.json");
+    } catch (e) {
+      this._fetchWeather(""); // fallback
+      return;
+    }
+
+    this._session.send_and_read_async(
+      geoMsg,
+      GLib.PRIORITY_DEFAULT,
+      null,
+      (sess, res) => {
+        try {
+          const bytes = sess.send_and_read_finish(res);
+          if (!bytes) return this._fetchWeather("");
+          
+          const raw = new TextDecoder().decode(bytes.get_data() ?? new Uint8Array());
+          const json = JSON.parse(raw);
+          const city = json.city ? json.city.trim() : "";
+          
+          this._fetchWeather(city);
+        } catch (e) {
+          if (!e.message?.includes("cancel"))
+            console.warn("DynamicIsland/Weather: IP auto-detect failed:", e.message);
+          this._fetchWeather(""); // fallback
+        }
+      },
+    );
+  }
+
+  _fetchWeather(loc) {
+    if (!this._session || !this._settings) return;
     const units = this._settings.get_string("weather-units") === "imperial" ? "u" : "m";
 
     // %t = temperature | %c = weather condition emoji
@@ -96,6 +145,7 @@ export class WeatherClient {
       msg = Soup.Message.new("GET", url);
     } catch (e) {
       console.warn("DynamicIsland/Weather: invalid URL:", e.message);
+      this._setStatus("Invalid URL: " + e.message);
       return;
     }
     msg.get_request_headers().append(
@@ -117,6 +167,7 @@ export class WeatherClient {
             .trim();
 
           if (!raw || raw.toLowerCase().startsWith("unknown")) {
+            this._setStatus("Unknown location");
             this._onUpdate?.({ temp: "?°C", icon: "🌡️" });
             return;
           }
@@ -127,10 +178,13 @@ export class WeatherClient {
             .replace(/^\+/, "");
           const icon = (sep >= 0 ? raw.slice(sep + 1) : "🌡️").trim();
 
+          this._setStatus("OK (" + new Date().toLocaleTimeString() + ")");
           this._onUpdate?.({ temp, icon });
         } catch (e) {
-          if (!e.message?.includes("cancel"))
+          if (!e.message?.includes("cancel")) {
             console.warn("DynamicIsland/Weather: fetch failed:", e.message);
+            this._setStatus("Failed to fetch: " + e.message);
+          }
         }
       },
     );

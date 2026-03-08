@@ -27,6 +27,7 @@ export class BluetoothWatcher {
     this._settings = settings;
     this._devices = new Map(); // objectPath → { name, icon, connected, battery }
     this._sigIds = [];
+    this._debounceSrc = null; // pending _addDevice debounce timer
     this._onChanged = null;
   }
 
@@ -139,6 +140,10 @@ export class BluetoothWatcher {
   }
 
   destroy() {
+    if (this._debounceSrc) {
+      GLib.Source.remove(this._debounceSrc);
+      this._debounceSrc = null;
+    }
     for (const id of this._sigIds) Gio.DBus.system.signal_unsubscribe(id);
     this._sigIds = [];
     this._devices = null;
@@ -162,7 +167,12 @@ export class BluetoothWatcher {
     if (connected) {
       // Debounce by 250 ms — lets the battery PropertiesChanged event arrive
       // before we emit, preventing a "name-only → name+battery%" flicker.
-      GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+      if (this._debounceSrc) {
+        GLib.Source.remove(this._debounceSrc);
+        this._debounceSrc = null;
+      }
+      this._debounceSrc = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+        this._debounceSrc = null;
         if (this._devices) this._emit();
         return GLib.SOURCE_REMOVE;
       });

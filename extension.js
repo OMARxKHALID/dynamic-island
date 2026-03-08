@@ -32,10 +32,12 @@ export default class DynamicIslandExtension extends Extension {
       this._settings,
       (enabled) => {
         this._islandEnabled = enabled;
-        if (enabled) this._startIsland();
-        else this._stopIsland();
-      },
-      () => this.openPreferences(),
+        if (enabled) {
+          this._startIsland();
+        } else {
+          this._stopIsland();
+        }
+      }
     );
     this._quickToggle.enable();
   }

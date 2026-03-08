@@ -235,12 +235,8 @@ export class IslandCore {
 
   _buildWidget() {
     const scale = this._scale;
-    const pillW = Math.floor(
-      (this._settings.get_int("pill-width") || PILL_W) * scale,
-    );
-    const pillH = Math.floor(
-      (this._settings.get_int("pill-height") || PILL_H) * scale,
-    );
+    const pillW = this._getPillW();
+    const pillH = this._getPillH();
 
     this._actor = new St.Widget({
       style_class: "dynamic-island",
@@ -399,9 +395,7 @@ export class IslandCore {
 
   _buildCompactView() {
     const scale = this._scale;
-    const artSize = Math.floor(
-      (this._settings.get_int("art-compact-size") || ART_COMPACT) * scale,
-    );
+    const artSize = this._getArtCompactSize();
 
     const box = new St.BoxLayout({
       style_class: "di-compact-view",
@@ -480,9 +474,7 @@ export class IslandCore {
 
   _buildExpandedView() {
     const scale = this._scale;
-    const artSize = Math.floor(
-      (this._settings.get_int("art-expanded-size") || ART_EXPANDED) * scale,
-    );
+    const artSize = this._getArtExpandedSize();
 
     const box = new St.BoxLayout({
       style_class: "di-expanded-view",
@@ -824,6 +816,20 @@ export class IslandCore {
     }
   }
 
+  // ── Size Calculation Helpers ────────────────────────────────────────────────
+
+  _getPillW() { return Math.floor((this._settings.get_int("pill-width") || PILL_W) * this._scale); }
+  _getPillH() { return Math.floor((this._settings.get_int("pill-height") || PILL_H) * this._scale); }
+  _getCompactW() { return Math.floor((this._settings.get_int("compact-width") || COMPACT_W) * this._scale); }
+  _getCompactH() { return Math.floor((this._settings.get_int("compact-height") || COMPACT_H) * this._scale); }
+  _getExpandedW() { return Math.floor((this._settings.get_int("expanded-width") || EXPANDED_W) * this._scale); }
+  _getExpandedH() { return Math.floor((this._settings.get_int("expanded-height") || EXPANDED_H) * this._scale); }
+  _getOsdW() { return Math.floor((this._settings.get_int("osd-width") || OSD_W) * this._scale); }
+  _getOsdH() { return Math.floor((this._settings.get_int("osd-height") || OSD_H) * this._scale); }
+
+  _getArtExpandedSize() { return Math.floor((this._settings.get_int("art-expanded-size") || ART_EXPANDED) * this._scale); }
+  _getArtCompactSize() { return Math.floor((this._settings.get_int("art-compact-size") || ART_COMPACT) * this._scale); }
+
   _repositionForSize(width) {
     const monitor = Main.layoutManager.primaryMonitor;
     if (!monitor) return;
@@ -860,15 +866,16 @@ export class IslandCore {
     this._compactArtActor = null;
 
     const scale = this._scale;
-    let baseH = this._settings.get_int("pill-height") || PILL_H;
-    if (currentState === State.COMPACT)
-      baseH = this._settings.get_int("compact-height") || COMPACT_H;
-    else if (currentState === State.EXPANDED)
-      baseH = this._settings.get_int("expanded-height") || EXPANDED_H;
-    else if (currentState === State.OSD)
-      baseH = this._settings.get_int("osd-height") || OSD_H;
-    else if (currentState === State.NOTIF) baseH = NOTIF_H;
-    this._updateNotchStyle(Math.floor(baseH * scale), currentState);
+    let baseH;
+    switch (currentState) {
+      case State.PILL: baseH = this._getPillH(); break;
+      case State.COMPACT: baseH = this._getCompactH(); break;
+      case State.EXPANDED: baseH = this._getExpandedH(); break;
+      case State.OSD: baseH = this._getOsdH(); break;
+      case State.NOTIF: baseH = Math.floor(NOTIF_H * scale); break;
+      default: baseH = this._getPillH();
+    }
+    this._updateNotchStyle(baseH, currentState);
 
     if (this._blurEffect) {
       try {
@@ -966,28 +973,26 @@ export class IslandCore {
 
     switch (state) {
       case State.COMPACT:
-        targetW = this._settings.get_int("compact-width") || COMPACT_W;
-        targetH = this._settings.get_int("compact-height") || COMPACT_H;
+        targetW = this._getCompactW();
+        targetH = this._getCompactH();
         break;
       case State.EXPANDED:
-        targetW = this._settings.get_int("expanded-width") || EXPANDED_W;
-        targetH = this._settings.get_int("expanded-height") || EXPANDED_H;
+        targetW = this._getExpandedW();
+        targetH = this._getExpandedH();
         break;
       case State.OSD:
-        targetW = this._settings.get_int("osd-width") || OSD_W;
-        targetH = this._settings.get_int("osd-height") || OSD_H;
+        targetW = this._getOsdW();
+        targetH = this._getOsdH();
         break;
       case State.NOTIF:
-        targetW = NOTIF_W;
-        targetH = NOTIF_H;
+        targetW = Math.floor(NOTIF_W * scale);
+        targetH = Math.floor(NOTIF_H * scale);
         break;
       default:
-        targetW = this._settings.get_int("pill-width") || PILL_W;
-        targetH = this._settings.get_int("pill-height") || PILL_H;
+        targetW = this._getPillW();
+        targetH = this._getPillH();
     }
 
-    targetW = Math.floor(targetW * scale);
-    targetH = Math.floor(targetH * scale);
     this._updateNotchStyle(targetH, state);
 
     for (const v of [
@@ -1162,12 +1167,25 @@ export class IslandCore {
     }
 
     if (this._playing) {
+      if (this._collapseTimeoutId) {
+        GLib.Source.remove(this._collapseTimeoutId);
+        this._collapseTimeoutId = null;
+      }
       this._showActor(180);
       if (this._state === State.PILL || this._state === State.OSD)
         this._transitionTo(State.COMPACT);
     } else {
-      if (this._state === State.COMPACT || this._state === State.EXPANDED)
-        this._transitionTo(State.PILL);
+      if (this._state === State.COMPACT || this._state === State.EXPANDED) {
+        if (!this._collapseTimeoutId) {
+          this._collapseTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
+            this._collapseTimeoutId = null;
+            if (this._state === State.COMPACT || this._state === State.EXPANDED) {
+              this._transitionTo(State.PILL);
+            }
+            return GLib.SOURCE_REMOVE;
+          });
+        }
+      }
     }
   }
 
@@ -1187,6 +1205,11 @@ export class IslandCore {
     this._lastTrackId = null;
     this._trackLength = 0;
 
+    if (this._collapseTimeoutId) {
+      GLib.Source.remove(this._collapseTimeoutId);
+      this._collapseTimeoutId = null;
+    }
+
     this._seekTracker.stop();
     this._stopWaveform();
     this._clearAlbumArt();
@@ -1205,7 +1228,7 @@ export class IslandCore {
     }
 
     this._actor?.show();
-    this._actor.opacity = 255;
+    if (this._actor) this._actor.opacity = 255;
     this._transitionTo(State.PILL);
   }
 
@@ -1358,8 +1381,7 @@ export class IslandCore {
       this._showActor(100);
       this._transitionTo(State.OSD, () => {
         if (isBright && this._pendingBrightnessFill !== null) {
-          const bgW =
-            this._osdSmoothBg.get_width() || Math.floor((OSD_W - 40) * scale);
+          const bgW = this._osdSmoothBg.get_width() || Math.floor(this._getOsdW() - (40 * scale));
           this._osdSmoothFill.set_width(
             Math.floor(bgW * this._pendingBrightnessFill),
           );
@@ -1367,8 +1389,7 @@ export class IslandCore {
         }
       });
     } else if (isBright) {
-      const bgW =
-        this._osdSmoothBg.get_width() || Math.floor((OSD_W - 40) * scale);
+      const bgW = this._osdSmoothBg.get_width() || Math.floor(this._getOsdW() - (40 * scale));
       this._osdSmoothFill.set_width(
         Math.floor(bgW * (clamped / (maxLevel || 1))),
       );
@@ -1669,12 +1690,8 @@ export class IslandCore {
           );
         };
 
-        const expandedPx = Math.floor(
-          (this._settings.get_int("art-expanded-size") || ART_EXPANDED) * scale,
-        );
-        const compactPx = Math.floor(
-          (this._settings.get_int("art-compact-size") || ART_COMPACT) * scale,
-        );
+        const expandedPx = this._getArtExpandedSize();
+        const compactPx = this._getArtCompactSize();
 
         const bigPb = fitPixbuf(expandedPx);
         const smallPb = fitPixbuf(compactPx);
