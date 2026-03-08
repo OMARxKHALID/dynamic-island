@@ -35,13 +35,15 @@ ok "Installed: $NAUTILUS_EXT_DIR/nautilus-stash.py"
 
 # ── 3. Copy the stash.js module into the extension's src/ ────────────────────
 hdr "Installing stash.js module..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -d "$SCRIPT_DIR/src" ]]; then
-    cp src/stash.js "$SCRIPT_DIR/src/stash.js"
-    ok "Installed: $SCRIPT_DIR/src/stash.js"
+UUID="dynamic-island@omarxkhalid.github.io"
+DEST_DIR="$HOME/.local/share/gnome-shell/extensions/$UUID"
+
+if [[ -d "$DEST_DIR/src" ]]; then
+    cp src/stash.js "$DEST_DIR/src/stash.js"
+    ok "Installed: $DEST_DIR/src/stash.js"
 else
-    err "Could not find src/ directory next to install-stash.sh"
-    echo "  Make sure you're running this script from the extension root."
+    err "Could not find extension directory at $DEST_DIR/src"
+    echo "  Make sure you've synced the extension using ./sync.sh first."
     exit 1
 fi
 

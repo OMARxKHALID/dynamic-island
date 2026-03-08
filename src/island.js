@@ -2,7 +2,7 @@
  * island.js
  *
  * Core Dynamic Island actor.
- * States: Pill (clock) → Compact (waveform) → Expanded (player) → OSD → Notif
+ * States: Pill (clock) → Compact (waveform) → Expanded (player) → OSD → Notif → Stash
  */
 
 import GLib from "gi://GLib";
@@ -26,6 +26,8 @@ import {
   OSD_H,
   NOTIF_W,
   NOTIF_H,
+  STASH_W,
+  STASH_H,
   OSD_SEG_COUNT,
   OSD_HIDE_MS,
   NOTIF_HIDE_MS,
@@ -60,7 +62,10 @@ export class IslandCore {
     this._lastWeatherData = null;
     this._lastBtDevices = [];
 
-    // Pill-view layout refs (set once in _buildPillView)
+    // File Stash
+    this._stashFiles = [];
+    this._stashFolderUri = null;
+    this._stashActionCallback = null;
 
     // OSD
     this._osdState = null;
@@ -277,6 +282,7 @@ export class IslandCore {
     this._expandedView = this._buildExpandedView();
     this._osdView = this._buildOsdView();
     this._notifView = this._buildNotifView();
+    this._stashView = this._buildStashView();
 
     for (const v of [
       this._pillView,
@@ -284,6 +290,7 @@ export class IslandCore {
       this._expandedView,
       this._osdView,
       this._notifView,
+      this._stashView,
     ])
       this._actor.add_child(v);
 
@@ -292,6 +299,7 @@ export class IslandCore {
     this._expandedView.hide();
     this._osdView.hide();
     this._notifView.hide();
+    this._stashView.hide();
 
     // Hover
     this._hoverId = this._actor.connect("notify::hover", () => {
@@ -780,6 +788,107 @@ export class IslandCore {
     return box;
   }
 
+  _buildStashView() {
+    const scale = this._scale;
+
+    const box = new St.BoxLayout({
+      style_class: "di-stash-view",
+      vertical: true,
+      x_expand: true,
+      y_expand: true,
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `spacing: ${Math.floor(10 * scale)}px;`,
+    });
+
+    // ── Top row: icon + count label ──────────────────────────────────────────
+    const topRow = new St.BoxLayout({
+      vertical: false,
+      x_expand: true,
+      y_align: Clutter.ActorAlign.CENTER,
+      style: `spacing: ${Math.floor(8 * scale)}px;`,
+    });
+
+    this._stashIcon = new St.Icon({
+      style_class: "di-stash-icon",
+      icon_name: "folder-copy-symbolic",
+      icon_size: Math.floor(16 * scale),
+      y_align: Clutter.ActorAlign.CENTER,
+    });
+
+    this._stashCountLabel = new St.Label({
+      style_class: "di-stash-count",
+      text: "0 files stashed",
+      y_align: Clutter.ActorAlign.CENTER,
+      style: this._getFont(13),
+      x_expand: true,
+    });
+    this._stashCountLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
+
+    topRow.add_child(this._stashIcon);
+    topRow.add_child(this._stashCountLabel);
+
+    // ── Destination row ──────────────────────────────────────────────────────
+    this._stashDestLabel = new St.Label({
+      style_class: "di-stash-dest",
+      text: "Navigate to destination in Nautilus",
+      x_expand: true,
+      style: this._getFont(11),
+    });
+    this._stashDestLabel.clutter_text.set_ellipsize(Pango.EllipsizeMode.END);
+
+    // ── Action buttons row ───────────────────────────────────────────────────
+    const btnRow = new St.BoxLayout({
+      vertical: false,
+      x_expand: true,
+      x_align: Clutter.ActorAlign.CENTER,
+      style: `spacing: ${Math.floor(6 * scale)}px;`,
+    });
+
+    this._stashMoveBtn = new St.Button({
+      label: "Move here",
+      style_class: "di-stash-btn",
+      can_focus: true,
+      reactive: true,
+    });
+    this._stashMoveBtn.connect("clicked", () => {
+      this._stashActionCallback?.("move");
+      return Clutter.EVENT_STOP;
+    });
+
+    this._stashCopyBtn = new St.Button({
+      label: "Copy here",
+      style_class: "di-stash-btn",
+      can_focus: true,
+      reactive: true,
+    });
+    this._stashCopyBtn.connect("clicked", () => {
+      this._stashActionCallback?.("copy");
+      return Clutter.EVENT_STOP;
+    });
+
+    this._stashClearBtn = new St.Button({
+      label: "✕",
+      style_class: "di-stash-btn di-stash-btn-clear",
+      can_focus: true,
+      reactive: true,
+    });
+    this._stashClearBtn.connect("clicked", () => {
+      this._stashActionCallback?.("clear");
+      return Clutter.EVENT_STOP;
+    });
+
+    btnRow.add_child(this._stashMoveBtn);
+    btnRow.add_child(this._stashCopyBtn);
+    btnRow.add_child(new St.Widget({ x_expand: true }));
+    btnRow.add_child(this._stashClearBtn);
+
+    box.add_child(topRow);
+    box.add_child(this._stashDestLabel);
+    box.add_child(btnRow);
+
+    return box;
+  }
+
   _makeCtrlBtn(iconName, accessibleName, onClicked) {
     const btn = new St.Button({
       style_class: "di-ctrl-btn",
@@ -824,6 +933,7 @@ export class IslandCore {
       const shouldBeVisible =
         this._playing ||
         this._state === State.OSD ||
+        this._state === State.STASH ||
         !this._settings.get_boolean("auto-hide");
       if (shouldBeVisible) {
         this._actor.show();
@@ -859,7 +969,7 @@ export class IslandCore {
     }
   }
 
-  // ── Size Calculation Helpers ────────────────────────────────────────────────
+  // ── Size Calculation Helpers ──────────────────────────────────────────────
 
   _getPillW() {
     return Math.floor(
@@ -971,6 +1081,9 @@ export class IslandCore {
       case State.NOTIF:
         baseH = Math.floor(NOTIF_H * scale);
         break;
+      case State.STASH:
+        baseH = Math.floor(STASH_H * scale);
+        break;
       default:
         baseH = this._getPillH();
     }
@@ -988,6 +1101,7 @@ export class IslandCore {
     this._expandedView = this._buildExpandedView();
     this._osdView = this._buildOsdView();
     this._notifView = this._buildNotifView();
+    this._stashView = this._buildStashView();
 
     for (const v of [
       this._pillView,
@@ -995,6 +1109,7 @@ export class IslandCore {
       this._expandedView,
       this._osdView,
       this._notifView,
+      this._stashView,
     ]) {
       this._actor.add_child(v);
       v.hide();
@@ -1005,6 +1120,7 @@ export class IslandCore {
     else if (currentState === State.EXPANDED) this._expandedView.show();
     else if (currentState === State.OSD) this._osdView.show();
     else if (currentState === State.NOTIF) this._notifView.show();
+    else if (currentState === State.STASH) this._stashView.show();
 
     this._transitionTo(currentState);
     this._startClock();
@@ -1024,6 +1140,10 @@ export class IslandCore {
         this._osdState.level,
         this._osdState.max,
       );
+
+    // Re-apply stash state if we had files in the stash
+    if (this._stashFiles?.length)
+      this._applyStashUI(this._stashFiles, this._stashFolderUri);
 
     this._updatePillSep();
   }
@@ -1055,7 +1175,8 @@ export class IslandCore {
     let radius = Math.round(height / 2);
     if (state === State.EXPANDED || state === State.NOTIF)
       radius = Math.round(44 * this._scale);
-    else if (state === State.OSD) radius = Math.round(38 * this._scale);
+    else if (state === State.OSD || state === State.STASH)
+      radius = Math.round(38 * this._scale);
 
     this._actor.set_style(
       `background-color: rgba(${r},${g},${b},${bgOpacity});` +
@@ -1089,6 +1210,10 @@ export class IslandCore {
         targetW = Math.floor(NOTIF_W * scale);
         targetH = Math.floor(NOTIF_H * scale);
         break;
+      case State.STASH:
+        targetW = Math.floor(STASH_W * scale);
+        targetH = Math.floor(STASH_H * scale);
+        break;
       default:
         targetW = this._getPillW();
         targetH = this._getPillH();
@@ -1102,6 +1227,7 @@ export class IslandCore {
       this._expandedView,
       this._osdView,
       this._notifView,
+      this._stashView,
     ])
       v.hide();
 
@@ -1126,11 +1252,9 @@ export class IslandCore {
         else if (state === State.COMPACT) this._compactView.show();
         else if (state === State.EXPANDED) {
           this._expandedView.show();
-          // Defer renderNow() to the NEXT idle frame so that Clutter has had
-          // time to do a layout pass and _seekBg.get_width() returns the actual
-          // allocated width rather than 0 or a stale preferred-size value.
-          // Without this, the fill is drawn at the wrong proportion the first
-          // time the expanded view opens on each track.
+          // Defer renderNow() to the NEXT idle frame so Clutter has had
+          // time to do a layout pass and _seekBg.get_width() returns the
+          // actual allocated width rather than 0 or a stale preferred-size.
           if (this._renderIdleSrc) {
             GLib.Source.remove(this._renderIdleSrc);
             this._renderIdleSrc = null;
@@ -1140,13 +1264,13 @@ export class IslandCore {
             () => {
               this._renderIdleSrc = null;
               if (!this._seekTracker || !this._actor) return GLib.SOURCE_REMOVE;
-              // Re-fetch actual playback position from player, then render
               this._seekTracker.fetchNow();
               return GLib.SOURCE_REMOVE;
             },
           );
         } else if (state === State.OSD) this._osdView.show();
         else if (state === State.NOTIF) this._notifView.show();
+        else if (state === State.STASH) this._stashView.show();
 
         if (state === State.PILL && !this._playing) this._resetAutoHideTimer();
 
@@ -1156,15 +1280,11 @@ export class IslandCore {
   }
 
   _onHoverEnter() {
-    // Expand whenever a player is tracked — whether playing or paused.
-    // This lets the user hover a paused compact island to reveal controls
-    // and press play without needing to click first.
     if (this._mediaProxy && this._state === State.COMPACT)
       this._transitionTo(State.EXPANDED);
   }
 
   _onHoverLeave() {
-    // Always collapse back to compact so the waveform/cover view is restored.
     if (this._mediaProxy && this._state === State.EXPANDED)
       this._transitionTo(State.COMPACT);
   }
@@ -1183,7 +1303,12 @@ export class IslandCore {
       delaySecs,
       () => {
         this._autoHideSrc = null;
-        if (this._playing || this._state === State.OSD || this._actor?.hover)
+        if (
+          this._playing ||
+          this._state === State.OSD ||
+          this._state === State.STASH ||
+          this._actor?.hover
+        )
           return GLib.SOURCE_REMOVE;
         this._actor?.ease({
           opacity: 0,
@@ -1208,8 +1333,6 @@ export class IslandCore {
   updateMedia(proxy) {
     this._mediaProxy = proxy;
 
-    // FIX: capture playing state BEFORE updating it — used below to decide
-    // whether to call start() (resume) vs doing nothing (still playing).
     const wasPlaying = this._playing;
 
     const meta = proxy.get_cached_property("Metadata")?.deepUnpack() ?? {};
@@ -1264,25 +1387,16 @@ export class IslandCore {
 
     if (this._playing) {
       if (trackChanged) {
-        // New track — full position reset
         this._seekTracker.reset(proxy, newLength);
       } else if (!wasPlaying) {
-        // Resumed from pause — re-anchor without resetting position to 0
         this._seekTracker.start(proxy, newLength);
       } else {
-        // Still same track, but duration might have changed (e.g. buffering finished)
         this._seekTracker.updateLength(newLength);
       }
-      // else: still playing same track — leave tracker alone so the progress
-      // bar does NOT snap back to 0 on every property-changed event (volume,
-      // art updates, CanGoNext flips, etc.)
       this._startWaveform();
       this._cancelAutoHide();
     } else {
       if (trackChanged) {
-        // Track was switched while paused (e.g. user clicked 'Next' physically).
-        // Must hard-reset the tracker so it interpolates from 0 rather than
-        // the old track's advanced location.
         this._seekTracker.reset(proxy, newLength);
       }
       this._seekTracker.stop();
@@ -1294,7 +1408,6 @@ export class IslandCore {
     const showMediaView = this._playing || (persist && title.length > 0);
 
     if (showMediaView) {
-      // Cancel any pending collapse timer
       if (this._collapseTimeoutId) {
         GLib.Source.remove(this._collapseTimeoutId);
         this._collapseTimeoutId = null;
@@ -1303,9 +1416,6 @@ export class IslandCore {
       if (this._state === State.PILL || this._state === State.OSD) {
         this._transitionTo(State.COMPACT);
       } else if (!this._playing && this._state === State.EXPANDED) {
-        // Paused while expanded — drop back to compact so the waveform/cover
-        // is visible. But if the user's cursor is still over the island, keep
-        // it expanded so they can see the controls and press play again.
         if (!this._actor?.hover) this._transitionTo(State.COMPACT);
       }
     } else {
@@ -1329,12 +1439,6 @@ export class IslandCore {
     }
   }
 
-  /**
-   * Called when the MPRIS player fires the Seeked signal — e.g. the user
-   * scrubs in Spotify/VLC, or another app seeks programmatically.
-   * Re-anchors the seek tracker immediately so the island bar matches.
-   * @param {number} posMicros  New absolute position in microseconds.
-   */
   onPlayerSeeked(posMicros) {
     this._seekTracker?.seekedTo(posMicros);
   }
@@ -1371,7 +1475,9 @@ export class IslandCore {
 
     this._actor?.show();
     if (this._actor) this._actor.opacity = 255;
-    this._transitionTo(State.PILL);
+
+    // Only go back to pill if we're not showing the stash
+    if (this._state !== State.STASH) this._transitionTo(State.PILL);
   }
 
   // ── Weather ───────────────────────────────────────────────────────────────
@@ -1394,8 +1500,6 @@ export class IslandCore {
     const wxVis = this._weatherWidget?.visible ?? false;
     const hasSideInfo = btVis || wxVis;
 
-    // When nothing is on the left, flanking spacers (both x_expand) centre the clock.
-    // When info is present, the mid-spacer pushes the clock to the right.
     if (
       this._pillPrefixSpacer &&
       this._pillSuffixSpacer &&
@@ -1417,7 +1521,6 @@ export class IslandCore {
 
     if (this._btIndicator) this._btIndicator.visible = show && hasConn;
 
-    // Update pill label
     if (hasConn) {
       const primary = devices[0];
       const iconMap = {
@@ -1441,8 +1544,71 @@ export class IslandCore {
       this._btBatteryLabel?.set_text(labelText);
     }
 
-    // Update pill separator visibility
     this._updatePillSep();
+  }
+
+  // ── File Stash ────────────────────────────────────────────────────────────
+
+  /**
+   * Called by extension.js whenever the stash state changes.
+   * @param {string[]} files     Array of file:// URIs in the stash.
+   * @param {string|null} folderUri  Current Nautilus folder URI, or null.
+   */
+  updateStash(files, folderUri) {
+    this._stashFiles = files ?? [];
+    this._stashFolderUri = folderUri;
+
+    if (this._stashFiles.length === 0) {
+      // Stash was cleared — return to whatever was showing before
+      if (this._state === State.STASH) {
+        if (this._mediaProxy && this._playing)
+          this._transitionTo(State.COMPACT);
+        else this._transitionTo(State.PILL);
+      }
+      return;
+    }
+
+    this._applyStashUI(this._stashFiles, folderUri);
+    this._showActor(180);
+    this._cancelAutoHide();
+
+    // Only switch to STASH view if we're not in the middle of OSD/NOTIF
+    if (this._state !== State.OSD && this._state !== State.NOTIF)
+      this._transitionTo(State.STASH);
+  }
+
+  /**
+   * Provide the island with a callback to trigger file operations.
+   * Called by extension.js after _startIsland().
+   * @param {function(string)} cb  Called with "move", "copy", or "clear".
+   */
+  setStashActionCallback(cb) {
+    this._stashActionCallback = cb;
+  }
+
+  /** Update the stash view labels without triggering a state transition. */
+  _applyStashUI(files, folderUri) {
+    if (!this._stashCountLabel) return;
+
+    const n = files.length;
+    this._stashCountLabel.set_text(`${n} file${n !== 1 ? "s" : ""} stashed`);
+
+    if (folderUri) {
+      // Show just the last path segment as the destination name
+      const parts = folderUri.replace(/\/$/, "").split("/");
+      const folderName = decodeURIComponent(
+        parts[parts.length - 1] || folderUri,
+      );
+      this._stashDestLabel?.set_text(`→ ${folderName}`);
+      // Enable move/copy buttons now that we have a destination
+      if (this._stashMoveBtn) this._stashMoveBtn.reactive = true;
+      if (this._stashCopyBtn) this._stashCopyBtn.reactive = true;
+    } else {
+      this._stashDestLabel?.set_text("Navigate to destination in Nautilus");
+      // Disable move/copy buttons until destination is known
+      if (this._stashMoveBtn) this._stashMoveBtn.reactive = false;
+      if (this._stashCopyBtn) this._stashCopyBtn.reactive = false;
+    }
   }
 
   // ── Playback controls ─────────────────────────────────────────────────────
@@ -1524,7 +1690,9 @@ export class IslandCore {
     this._osdHideSrc = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeout, () => {
       this._osdHideSrc = null;
       this._osdState = null;
-      if (this._playing) this._transitionTo(State.COMPACT);
+      // Return to stash if that's what was showing, otherwise media/pill
+      if (this._stashFiles?.length) this._transitionTo(State.STASH);
+      else if (this._playing) this._transitionTo(State.COMPACT);
       else this._transitionTo(State.PILL);
       return GLib.SOURCE_REMOVE;
     });
@@ -1620,7 +1788,6 @@ export class IslandCore {
     const title = notif.title ?? "";
     const body = (notif.body ?? "").replace(/\n/g, " ");
 
-    // GNOME 45+: source.icon is a Gio.Icon; older: source.iconName is a string
     const gicon = notif.source?.icon ?? null;
     if (gicon) {
       this._notifIcon.set_gicon(gicon);
@@ -1663,6 +1830,7 @@ export class IslandCore {
     if (
       restore === State.PILL &&
       !this._mediaProxy &&
+      !this._stashFiles?.length &&
       this._settings.get_boolean("auto-hide")
     ) {
       this._actor?.ease({
@@ -1687,11 +1855,6 @@ export class IslandCore {
     if (text && this._clockLabel) this._clockLabel.set_text(text);
   }
 
-  /**
-   * Starts a two-phase clock: first fires at the next full minute boundary,
-   * then ticks every 60 s.  Uses a single GLib source ID at a time — the
-   * phase-2 source is scheduled only after phase-1 has fully completed.
-   */
   _startClock() {
     this._stopClock();
     this._updateClock();
@@ -1699,17 +1862,13 @@ export class IslandCore {
     const now = GLib.DateTime.new_now_local();
     const secsLeft = now ? Math.max(1, 60 - now.get_second()) : 60;
 
-    // Phase 1: wait until the next minute boundary
     this._clockSrc = GLib.timeout_add_seconds(
       GLib.PRIORITY_DEFAULT,
       secsLeft,
       () => {
-        // Null out phase-1 ID before scheduling phase-2 to avoid any window
-        // where _clockSrc could refer to an already-removed source.
         this._clockSrc = null;
         this._updateClock();
 
-        // Phase 2: tick every 60 s
         this._clockSrc = GLib.timeout_add_seconds(
           GLib.PRIORITY_DEFAULT,
           60,
@@ -1836,7 +1995,6 @@ export class IslandCore {
 
         const srcW = pixbuf.get_width();
         const srcH = pixbuf.get_height();
-        const scale = this._scale;
 
         const fitPixbuf = (maxSize) => {
           if (srcW <= 0 || srcH <= 0) return pixbuf;
@@ -2023,5 +2181,8 @@ export class IslandCore {
     this._mediaProxy = null;
     this._osdState = null;
     this._dominantColor = null;
+    this._stashActionCallback = null;
+    this._stashFiles = [];
+    this._stashFolderUri = null;
   }
 }

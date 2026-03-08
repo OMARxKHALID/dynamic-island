@@ -16,6 +16,8 @@ export const OSD_W = 340;
 export const OSD_H = 110;
 export const NOTIF_W = 400;
 export const NOTIF_H = 80;
+export const STASH_W = 340;
+export const STASH_H = 110;
 export const NOTCH_RADIUS = 22;
 
 // ── Component-specific sizes (px, before scale) ───────────────────────────────
@@ -43,4 +45,5 @@ export const State = Object.freeze({
   EXPANDED: "expanded",
   OSD: "osd",
   NOTIF: "notif",
+  STASH: "stash",
 });

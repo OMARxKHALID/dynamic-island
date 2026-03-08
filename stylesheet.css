@@ -14,8 +14,6 @@
    ════════════════════════════════════════════════════════════════════════ */
 
 .di-pill-view {
-  /* Slightly tighter horizontal padding vs original 14px gives more inner
-     room for BT + weather + clock without crowding */
   padding: 0 12px;
 }
 
@@ -30,17 +28,14 @@
 
 /* ── Bluetooth indicator (pill) ──────────────────────────────────────────── */
 .di-bt-icon {
-  /* Soft blue that reads clearly without competing with the clock */
   color: rgba(90, 170, 255, 0.88);
 }
 
 .di-bt-label {
   font-size: 12px;
   font-weight: 600;
-  /* Slightly muted so battery% is secondary to the icon */
   color: rgba(255, 255, 255, 0.6);
   font-feature-settings: "tnum" 1;
-  /* Hard cap so a missing-battery fallback never overflows the pill */
   max-width: 48px;
 }
 
@@ -102,13 +97,11 @@
 }
 
 /* ── Bluetooth badge (bottom-left overlay on album art) ─────────────────── */
-/* Sits inside the album art BinLayout at START/END alignment.               */
-/* Dark pill with icon + optional battery label.                             */
 .di-bt-badge {
   border-radius: 999px;
   background-color: rgba(0, 0, 0, 0.62);
   padding: 3px 6px 3px 4px;
-  margin: 6px; /* inset from album art corner */
+  margin: 6px;
 }
 
 .di-bt-badge-icon {
@@ -137,7 +130,6 @@
 }
 
 /* ── Seek bar ────────────────────────────────────────────────────────────── */
-/* Hit area is 20px tall; the visual bar is 6px centered via margin */
 .di-seek-hit {
   background-color: transparent;
 }
@@ -257,4 +249,72 @@
 .di-notif-body {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.52);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FILE STASH VIEW
+   ════════════════════════════════════════════════════════════════════════ */
+
+.di-stash-view {
+  padding: 12px 18px 14px;
+}
+
+/* File count + icon row */
+.di-stash-icon {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.di-stash-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+/* Destination folder label */
+.di-stash-dest {
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* Action buttons */
+.di-stash-btn {
+  background-color: rgba(255, 255, 255, 0.12);
+  border: none;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.di-stash-btn:hover {
+  background-color: rgba(255, 255, 255, 0.22);
+}
+
+.di-stash-btn:active {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Disabled state — when no destination folder is known yet */
+.di-stash-btn:insensitive {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.25);
+}
+
+/* The ✕ (clear) dismiss button — subtle, tucked to the right */
+.di-stash-btn-clear {
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.35);
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.di-stash-btn-clear:hover {
+  background-color: rgba(255, 60, 60, 0.25);
+  color: rgba(255, 130, 130, 0.9);
+}
+
+.di-stash-btn-clear:active {
+  background-color: rgba(255, 60, 60, 0.12);
 }

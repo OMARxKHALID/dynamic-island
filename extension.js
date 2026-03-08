@@ -19,6 +19,7 @@ import { Scrobbler } from "./src/scrobbler.js";
 import { WeatherClient } from "./src/weather.js";
 import { BluetoothWatcher } from "./src/bluetooth.js";
 import { QuickSettingsTile } from "./src/quickToggle.js";
+import { FileStash } from "./src/stash.js";
 
 export default class DynamicIslandExtension extends Extension {
   enable() {
@@ -28,17 +29,14 @@ export default class DynamicIslandExtension extends Extension {
     this._startIsland();
 
     // Quick Settings tile (GNOME 43+)
-    this._quickToggle = new QuickSettingsTile(
-      this._settings,
-      (enabled) => {
-        this._islandEnabled = enabled;
-        if (enabled) {
-          this._startIsland();
-        } else {
-          this._stopIsland();
-        }
+    this._quickToggle = new QuickSettingsTile(this._settings, (enabled) => {
+      this._islandEnabled = enabled;
+      if (enabled) {
+        this._startIsland();
+      } else {
+        this._stopIsland();
       }
-    );
+    });
     this._quickToggle.enable();
   }
 
@@ -111,6 +109,20 @@ export default class DynamicIslandExtension extends Extension {
     // Bluetooth
     this._bluetooth = new BluetoothWatcher(this._settings);
     this._bluetooth.start((devices) => this._island.updateBluetooth(devices));
+
+    // File Stash — D-Bus service so Nautilus can send files to the island
+    this._stash = new FileStash((files, folderUri) => {
+      this._island.updateStash(files, folderUri);
+    });
+    this._stash.start();
+
+    // Give the island a way to trigger file operations back through the stash
+    this._island.setStashActionCallback((action) => {
+      if (!this._stash) return;
+      if (action === "move") this._stash.executeMove();
+      if (action === "copy") this._stash.executeCopy();
+      if (action === "clear") this._stash.clear();
+    });
   }
 
   _stopIsland() {
@@ -157,6 +169,10 @@ export default class DynamicIslandExtension extends Extension {
     if (this._bluetooth) {
       this._bluetooth.destroy();
       this._bluetooth = null;
+    }
+    if (this._stash) {
+      this._stash.destroy();
+      this._stash = null;
     }
 
     this._lastMprisStatus = null;
