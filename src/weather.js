@@ -13,24 +13,24 @@
 import GLib from "gi://GLib";
 import Soup from "gi://Soup";
 
-const WTTR_BASE         = "https://wttr.in";
+const WTTR_BASE = "https://wttr.in";
 const REFRESH_INTERVAL_S = 30 * 60; // fetch every 30 minutes
-const REQUEST_TIMEOUT_S  = 30; // Increased to 30s for slower connections
+const REQUEST_TIMEOUT_S = 30; // Increased to 30s for slower connections
 
 export class WeatherClient {
   constructor(settings) {
-    this._settings   = settings;
-    this._session    = null;
+    this._settings = settings;
+    this._session = null;
     this._refreshSrc = null;
     this._debounceSrc = null; // always initialised to null
-    this._onUpdate   = null;
+    this._onUpdate = null;
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
 
   start(onUpdate) {
     this._onUpdate = onUpdate;
-    this._session  = new Soup.Session({ timeout: REQUEST_TIMEOUT_S });
+    this._session = new Soup.Session({ timeout: REQUEST_TIMEOUT_S });
 
     this._fetch();
 
@@ -45,7 +45,7 @@ export class WeatherClient {
   }
 
   /**
-   * Trigger a re-fetch, debounced by 500 ms to avoid flooding the network
+   * Trigger a re-fetch, debounced by 800 ms to avoid flooding the network
    * when the user types character-by-character in the location field.
    */
   refresh() {
@@ -60,6 +60,15 @@ export class WeatherClient {
     });
   }
 
+  /** Fetch immediately, cancelling any pending debounce. Used after explicit user selection. */
+  refreshNow() {
+    if (this._debounceSrc) {
+      GLib.Source.remove(this._debounceSrc);
+      this._debounceSrc = null;
+    }
+    this._fetch();
+  }
+
   /**
    * Search for locations based on a query.
    * Returns a promise resolving to an array of { name, country, lat, lon }.
@@ -70,29 +79,43 @@ export class WeatherClient {
 
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
     const msg = Soup.Message.new("GET", url);
-    msg.get_request_headers().append("User-Agent", "DynamicIsland-GNOME-Extension/1.1 (https://github.com/omarxkhalid/dynamic-island)");
+    msg
+      .get_request_headers()
+      .append(
+        "User-Agent",
+        "DynamicIsland-GNOME-Extension/1.1 (https://github.com/omarxkhalid/dynamic-island)",
+      );
 
     return new Promise((resolve) => {
-      this._session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (session, res) => {
-        try {
-          const bytes = session.send_and_read_finish(res);
-          if (!bytes) {
+      this._session.send_and_read_async(
+        msg,
+        GLib.PRIORITY_DEFAULT,
+        null,
+        (session, res) => {
+          try {
+            const bytes = session.send_and_read_finish(res);
+            if (!bytes) {
+              resolve([]);
+              return;
+            }
+            const raw = new TextDecoder().decode(bytes.get_data());
+            const json = JSON.parse(raw);
+            const mapped = json.map((item) => ({
+              name: item.display_name,
+              lat: item.lat,
+              lon: item.lon,
+              city:
+                item.address?.city ||
+                item.address?.town ||
+                item.address?.village ||
+                "",
+            }));
+            resolve(mapped);
+          } catch (e) {
             resolve([]);
-            return;
           }
-          const raw = new TextDecoder().decode(bytes.get_data());
-          const json = JSON.parse(raw);
-          const mapped = json.map(item => ({
-            name: item.display_name,
-            lat: item.lat,
-            lon: item.lon,
-            city: item.address?.city || item.address?.town || item.address?.village || ""
-          }));
-          resolve(mapped);
-        } catch (e) {
-          resolve([]);
-        }
-      });
+        },
+      );
     });
   }
 
@@ -108,7 +131,7 @@ export class WeatherClient {
     try {
       this._session?.abort();
     } catch (_e) {}
-    this._session  = null;
+    this._session = null;
     this._onUpdate = null;
     this._settings = null;
   }
@@ -135,10 +158,10 @@ export class WeatherClient {
 
   _autoDetectLocationThenFetch() {
     this._setStatus("Auto-detecting location...");
-    
+
     // Primary auto-detection via ipapi.co (reliable HTTPS)
     const msg = Soup.Message.new("GET", "https://ipapi.co/json/");
-    
+
     this._session.send_and_read_async(
       msg,
       GLib.PRIORITY_DEFAULT,
@@ -154,24 +177,32 @@ export class WeatherClient {
             }
           }
         } catch (e) {}
-        
+
         // Fallback: Second auto-detection via freeipapi.com
         try {
-          const fMsg = Soup.Message.new("GET", "https://freeipapi.com/api/json");
-          this._session.send_and_read_async(fMsg, GLib.PRIORITY_DEFAULT, null, (s, r) => {
-            try {
-              const b = s.send_and_read_finish(r);
-              if (b) {
-                const j = JSON.parse(new TextDecoder().decode(b.get_data()));
-                if (j.cityName) {
-                  this._fetchWeather(j.cityName);
-                  return;
+          const fMsg = Soup.Message.new(
+            "GET",
+            "https://freeipapi.com/api/json",
+          );
+          this._session.send_and_read_async(
+            fMsg,
+            GLib.PRIORITY_DEFAULT,
+            null,
+            (s, r) => {
+              try {
+                const b = s.send_and_read_finish(r);
+                if (b) {
+                  const j = JSON.parse(new TextDecoder().decode(b.get_data()));
+                  if (j.cityName) {
+                    this._fetchWeather(j.cityName);
+                    return;
+                  }
                 }
-              }
-            } catch (ex) {}
-            // Final fallback: Use wttr.in's own IP-based detection
-            this._fetchWeather("");
-          });
+              } catch (ex) {}
+              // Final fallback: Use wttr.in's own IP-based detection
+              this._fetchWeather("");
+            },
+          );
         } catch (err) {
           this._fetchWeather("");
         }
@@ -181,7 +212,8 @@ export class WeatherClient {
 
   _fetchWeather(loc) {
     if (!this._session || !this._settings) return;
-    const units = this._settings.get_string("weather-units") === "imperial" ? "u" : "m";
+    const units =
+      this._settings.get_string("weather-units") === "imperial" ? "u" : "m";
 
     // %t = temperature | %c = weather condition emoji
     const formatStr = "%t|%c";
@@ -197,10 +229,12 @@ export class WeatherClient {
       this._setStatus("Invalid URL: " + e.message);
       return;
     }
-    msg.get_request_headers().append(
-      "User-Agent",
-      "DynamicIsland-GNOME-Extension/1.0 (https://github.com/omarxkhalid/dynamic-island)",
-    );
+    msg
+      .get_request_headers()
+      .append(
+        "User-Agent",
+        "DynamicIsland-GNOME-Extension/1.0 (https://github.com/omarxkhalid/dynamic-island)",
+      );
 
     this._session.send_and_read_async(
       msg,
@@ -221,7 +255,7 @@ export class WeatherClient {
             return;
           }
 
-          const sep  = raw.indexOf("|");
+          const sep = raw.indexOf("|");
           const temp = (sep >= 0 ? raw.slice(0, sep) : raw)
             .trim()
             .replace(/^\+/, "");

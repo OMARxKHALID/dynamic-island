@@ -4,11 +4,12 @@
  * Preferences window for Dynamic Island.
  * Runs in the GTK/Adw preferences process — NEVER import Clutter/St/Shell here.
  *
- * Pages:
- *  1. Look & Feel  — position, art, colours, scale
- *  2. Features     — auto-hide, OSD, notifications, weather, player filter
- *  3. Scrobbling   — Last.fm and ListenBrainz credentials
- *  4. System       — reset, about
+ * Fixes applied:
+ *  - WeatherClient properly destroyed when prefs window closes (no timer/session leak).
+ *  - lastfm-username removed (key removed from gschema).
+ *  - Weather section redesigned: Adw.EntryRow, instant refresh on selection.
+ *  - Selection from autocomplete list triggers immediate weather fetch (no debounce).
+ *  - searchTimeoutId GLib source cleaned up on page destroy.
  */
 
 import Adw from "gi://Adw";
@@ -23,7 +24,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
   fillPreferencesWindow(window) {
     const settings = this.getSettings();
     this._weatherClient = new WeatherClient(settings);
-    // session will be started in the weather section later
 
     window.set_default_size(720, 700);
     window.set_title("Dynamic Island");
@@ -32,6 +32,13 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     window.add(this._buildFeaturesPage(settings));
     window.add(this._buildScrobblingPage(settings));
     window.add(this._buildSystemPage(settings));
+
+    // FIX: destroy WeatherClient when window closes so its 30-min timer
+    // and Soup.Session are not left running in the GTK process.
+    window.connect("close-request", () => {
+      this._weatherClient?.destroy();
+      this._weatherClient = null;
+    });
   }
 
   // ── Page 1: Look & Feel ───────────────────────────────────────────────────
@@ -53,14 +60,13 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         title: "Horizontal Shift",
         subtitle:
           "Move the island left (−) or right (+) for notch / camera alignment",
-        icon: "go-next-symbolic",
+        icon: "preferences-desktop-display-symbolic",
         lower: -1200,
         upper: 1200,
         step: 5,
         page: 50,
       }),
     );
-
     layoutGroup.add(
       this._switchRow(settings, "show-album-art", {
         title: "Show Album Art",
@@ -68,7 +74,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         icon: "image-x-generic-symbolic",
       }),
     );
-
     layoutGroup.add(
       this._switchRow(settings, "dynamic-art-color", {
         title: "Dynamic Art Colour",
@@ -77,15 +82,13 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         icon: "color-select-symbolic",
       }),
     );
-
     layoutGroup.add(
       this._switchRow(settings, "show-seek-bar", {
         title: "Show Progress Bar",
         subtitle: "Display the music timer and seek bar in the expanded view",
-        icon: "media-seek-forward-symbolic",
+        icon: "media-playback-start-symbolic",
       }),
     );
-
     layoutGroup.add(
       this._spinRow(settings, "notch-scale", {
         title: "Global Scaling",
@@ -98,7 +101,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         digits: 2,
       }),
     );
-
     layoutGroup.add(
       this._spinRow(settings, "font-size-multiplier", {
         title: "Font Size Multiplier",
@@ -112,97 +114,29 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       }),
     );
 
-    const dimensionsGroup = new Adw.PreferencesGroup({
+    const dimGroup = new Adw.PreferencesGroup({
       title: "Dimensions",
       description:
         "Customise the exact pixel sizes of each state (base size before scaling)",
     });
-    page.add(dimensionsGroup);
+    page.add(dimGroup);
 
-    dimensionsGroup.add(
-      this._spinRow(settings, "pill-width", {
-        title: "Idle Width",
-        lower: 50,
-        upper: 800,
-        step: 5,
-      }),
-    );
-    dimensionsGroup.add(
-      this._spinRow(settings, "pill-height", {
-        title: "Idle Height",
-        lower: 20,
-        upper: 200,
-        step: 2,
-      }),
-    );
-
-    dimensionsGroup.add(
-      this._spinRow(settings, "compact-width", {
-        title: "Compact Width (Waveform)",
-        lower: 50,
-        upper: 800,
-        step: 5,
-      }),
-    );
-    dimensionsGroup.add(
-      this._spinRow(settings, "compact-height", {
-        title: "Compact Height",
-        lower: 20,
-        upper: 200,
-        step: 2,
-      }),
-    );
-
-    dimensionsGroup.add(
-      this._spinRow(settings, "expanded-width", {
-        title: "Expanded Width (Media Player)",
-        lower: 150,
-        upper: 800,
-        step: 5,
-      }),
-    );
-    dimensionsGroup.add(
-      this._spinRow(settings, "expanded-height", {
-        title: "Expanded Height",
-        lower: 50,
-        upper: 500,
-        step: 5,
-      }),
-    );
-
-    dimensionsGroup.add(
-      this._spinRow(settings, "osd-width", {
-        title: "OSD Width (Volume/Brightness)",
-        lower: 100,
-        upper: 800,
-        step: 5,
-      }),
-    );
-    dimensionsGroup.add(
-      this._spinRow(settings, "osd-height", {
-        title: "OSD Height",
-        lower: 50,
-        upper: 300,
-        step: 2,
-      }),
-    );
-
-    dimensionsGroup.add(
-      this._spinRow(settings, "art-expanded-size", {
-        title: "Expanded Cover Art Size",
-        lower: 20,
-        upper: 300,
-        step: 2,
-      }),
-    );
-    dimensionsGroup.add(
-      this._spinRow(settings, "art-compact-size", {
-        title: "Compact Cover Art Size",
-        lower: 10,
-        upper: 100,
-        step: 2,
-      }),
-    );
+    for (const [key, title, lo, hi, step] of [
+      ["pill-width", "Idle Width", 50, 800, 5],
+      ["pill-height", "Idle Height", 20, 200, 2],
+      ["compact-width", "Compact Width (Waveform)", 50, 800, 5],
+      ["compact-height", "Compact Height", 20, 200, 2],
+      ["expanded-width", "Expanded Width (Media Player)", 150, 800, 5],
+      ["expanded-height", "Expanded Height", 50, 500, 5],
+      ["osd-width", "OSD Width (Volume/Brightness)", 100, 800, 5],
+      ["osd-height", "OSD Height", 50, 300, 2],
+      ["art-expanded-size", "Expanded Cover Art Size", 20, 300, 2],
+      ["art-compact-size", "Compact Cover Art Size", 10, 100, 2],
+    ]) {
+      dimGroup.add(
+        this._spinRow(settings, key, { title, lower: lo, upper: hi, step }),
+      );
+    }
 
     const styleGroup = new Adw.PreferencesGroup({
       title: "Colors & Transparency",
@@ -220,7 +154,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         settings.set_string("background-color", text);
     });
     styleGroup.add(colorRow);
-
     styleGroup.add(
       this._spinRow(settings, "background-opacity", {
         title: "Transparency",
@@ -266,15 +199,13 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     generalGroup.add(delayRow);
 
-    const updateDelayRow = () => {
+    const updateDelayRow = () =>
       delayRow.set_sensitive(settings.get_boolean("auto-hide"));
-    };
     updateDelayRow();
     const autoHideSigId = settings.connect(
       "changed::auto-hide",
       updateDelayRow,
     );
-    // Disconnect when the preferences window is closed
     page.connect("destroy", () => settings.disconnect(autoHideSigId));
 
     generalGroup.add(
@@ -284,7 +215,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         icon: "audio-volume-high-symbolic",
       }),
     );
-
     generalGroup.add(
       this._switchRow(settings, "persist-compact-media", {
         title: "Keep Media View While Paused",
@@ -293,17 +223,16 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         icon: "media-playback-pause-symbolic",
       }),
     );
-
     generalGroup.add(
       this._spinRow(settings, "osd-timeout", {
         title: "OSD Duration (ms)",
         subtitle: "How long volume and brightness popups stay visible",
+        icon: "preferences-system-time-symbolic",
         lower: 500,
         upper: 10000,
         step: 250,
       }),
     );
-
     generalGroup.add(
       this._switchRow(settings, "show-notifications", {
         title: "Notification Toasts",
@@ -314,7 +243,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
     const animGroup = new Adw.PreferencesGroup({ title: "Animation" });
     page.add(animGroup);
-
     animGroup.add(
       this._spinRow(settings, "animation-duration", {
         title: "Transition Speed (ms)",
@@ -332,10 +260,10 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       description: "Customise the idle pill clock display",
     });
     page.add(clockGroup);
-
     clockGroup.add(
       this._comboRow(settings, "time-format", {
         title: "Clock Format",
+        icon: "preferences-system-time-symbolic",
         choices: [
           { label: "Time Only (14:30)", value: "%H:%M" },
           { label: "Day & Time (Tue 14:30)", value: "%a %H:%M" },
@@ -348,168 +276,11 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       }),
     );
 
-    const weatherGroup = new Adw.PreferencesGroup({
-      title: "Weather",
-      description:
-        "Show current conditions alongside the clock in the idle pill",
-    });
-    page.add(weatherGroup);
-
-    weatherGroup.add(
-      this._switchRow(settings, "show-weather", {
-        title: "Show Weather",
-        subtitle: "Display temperature and condition in the pill view",
-        icon: "weather-clear-symbolic",
-      }),
-    );
-
-    // Status preview row
-    const statusRow = new Adw.ActionRow({
-      title: "Current Conditions",
-      subtitle: "No location set",
-    });
-    const statusIcon = new Gtk.Image({
-      icon_name: "weather-few-clouds-symbolic",
-      pixel_size: 24,
-      margin_end: 6,
-    });
-    statusRow.add_prefix(statusIcon);
-    weatherGroup.add(statusRow);
-
-    this._weatherClient.start((data) => {
-      statusRow.set_title(`${data.temp} — ${data.icon}`);
-      statusRow.set_subtitle(
-        `Current conditions in ${settings.get_string("weather-location") || "your local area"}`,
-      );
-    });
-
-    const refreshPreview = () => this._weatherClient.refresh();
-    const locSigId = settings.connect(
-      "changed::weather-location",
-      refreshPreview,
-    );
-    const unitSigId = settings.connect(
-      "changed::weather-units",
-      refreshPreview,
-    );
-    page.connect("destroy", () => {
-      settings.disconnect(locSigId);
-      settings.disconnect(unitSigId);
-    });
-
-    const locationRow = new Adw.EntryRow({
-      title: "Location",
-      show_apply_button: true,
-      text: settings.get_string("weather-location") || "",
-    });
-    locationRow.add_prefix(
-      new Gtk.Image({
-        icon_name: "find-location-symbolic",
-        valign: Gtk.Align.CENTER,
-      }),
-    );
-
-    // Spinner for search activity
-    const searchSpinner = new Gtk.Spinner({
-      valign: Gtk.Align.CENTER,
-      margin_end: 6,
-    });
-    locationRow.add_suffix(searchSpinner);
-    weatherGroup.add(locationRow);
-
-    // Results container (integrated into the same group)
-    const resultsBox = new Gtk.ListBox({
-      selection_mode: Gtk.SelectionMode.NONE,
-      visible: false,
-    });
-    resultsBox.add_css_class("boxed-list");
-    resultsBox.margin_bottom = 12;
-    weatherGroup.add(resultsBox);
-
-    let searchTimeoutId = 0;
-    locationRow.connect("changed", () => {
-      const text = locationRow.get_text().trim();
-      if (searchTimeoutId) {
-        GLib.Source.remove(searchTimeoutId);
-        searchTimeoutId = 0;
-      }
-
-      if (text.length < 1) {
-        resultsBox.hide();
-        searchSpinner.stop();
-        return;
-      }
-
-      searchSpinner.start();
-      // Increased to 1000ms to comply with Nominatim's 1 req/sec policy
-      searchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
-        searchTimeoutId = 0;
-        this._weatherClient
-          .search(text)
-          .then((results) => {
-            searchSpinner.stop();
-            // Clear old
-            let child = resultsBox.get_first_child();
-            while (child) {
-              resultsBox.remove(child);
-              child = resultsBox.get_first_child();
-            }
-
-            if (!results || results.length === 0) {
-              const noRes = new Adw.ActionRow({ title: "No locations found" });
-              resultsBox.append(noRes);
-              resultsBox.show();
-              return;
-            }
-
-            for (const res of results) {
-              const row = new Adw.ActionRow({
-                title: res.name,
-                subtitle: res.city
-                  ? `City: ${res.city}`
-                  : "Select this location",
-                activatable: true,
-              });
-              row.add_prefix(new Gtk.Image({ icon_name: "go-next-symbolic" }));
-              row.connect("activated", () => {
-                const finalLoc = res.city || res.name.split(",")[0].trim();
-                settings.set_string("weather-location", finalLoc);
-                locationRow.set_text(finalLoc);
-                resultsBox.hide();
-              });
-              resultsBox.append(row);
-            }
-            resultsBox.show();
-          })
-          .catch(() => searchSpinner.stop());
-        return GLib.SOURCE_REMOVE;
-      });
-    });
-
-    locationRow.connect("apply", () => {
-      settings.set_string("weather-location", locationRow.get_text().trim());
-      resultsGroup.hide();
-    });
-
-    // Sync back if changed elsewhere
-    const watchLocId = settings.connect("changed::weather-location", () => {
-      locationRow.set_text(settings.get_string("weather-location"));
-    });
-    page.connect("destroy", () => settings.disconnect(watchLocId));
-
-    weatherGroup.add(
-      this._comboRow(settings, "weather-units", {
-        title: "Units",
-        choices: [
-          { label: "Metric (°C)", value: "metric" },
-          { label: "Imperial (°F)", value: "imperial" },
-        ],
-      }),
-    );
+    // Redesigned weather section
+    page.add(this._buildWeatherGroup(settings, page));
 
     const btGroup = new Adw.PreferencesGroup({ title: "Bluetooth" });
     page.add(btGroup);
-
     btGroup.add(
       this._switchRow(settings, "show-bluetooth", {
         title: "Show Bluetooth Indicator",
@@ -523,7 +294,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       description: "Block specific players from triggering the island",
     });
     page.add(playerGroup);
-
     const blocklistRow = new Adw.EntryRow({
       title: 'Blocked Players (comma-separated, e.g. "firefox, chromium")',
     });
@@ -541,6 +311,286 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     return page;
   }
 
+  // ── Weather group (fully redesigned) ──────────────────────────────────────
+
+  _buildWeatherGroup(settings, page) {
+    const group = new Adw.PreferencesGroup({
+      title: "Weather",
+      description: "Data from wttr.in — no API key needed.",
+    });
+
+    // ── Toggle ────────────────────────────────────────────────────────────
+    group.add(
+      this._switchRow(settings, "show-weather", {
+        title: "Show Weather",
+        subtitle: "Temperature and conditions in the idle pill",
+        icon: "weather-clear-symbolic",
+      }),
+    );
+
+    // ── Live status preview (Stack: loading ↔ data) ───────────────────────
+    const loadingSpinner = new Gtk.Spinner({
+      spinning: true,
+      halign: Gtk.Align.CENTER,
+      valign: Gtk.Align.CENTER,
+      width_request: 24,
+      height_request: 24,
+    });
+
+    const statusIcon = new Gtk.Label({
+      label: "",
+      css_classes: ["title-2"],
+      valign: Gtk.Align.CENTER,
+      margin_end: 4,
+    });
+    const statusTemp = new Gtk.Label({
+      label: "—",
+      css_classes: ["title-3"],
+      valign: Gtk.Align.CENTER,
+    });
+    const statusLoc = new Gtk.Label({
+      label: "",
+      css_classes: ["caption", "dim-label"],
+      valign: Gtk.Align.CENTER,
+      halign: Gtk.Align.CENTER,
+      ellipsize: 3,
+    });
+
+    const dataVBox = new Gtk.Box({
+      orientation: Gtk.Orientation.VERTICAL,
+      spacing: 2,
+      valign: Gtk.Align.CENTER,
+      halign: Gtk.Align.CENTER,
+      hexpand: true,
+    });
+    const dataHBox = new Gtk.Box({
+      orientation: Gtk.Orientation.HORIZONTAL,
+      spacing: 4,
+      halign: Gtk.Align.CENTER,
+    });
+    dataHBox.append(statusIcon);
+    dataHBox.append(statusTemp);
+    dataVBox.append(dataHBox);
+    dataVBox.append(statusLoc);
+
+    const statusStack = new Gtk.Stack({
+      transition_type: Gtk.StackTransitionType.CROSSFADE,
+      transition_duration: 200,
+      hexpand: true,
+      vexpand: false,
+      valign: Gtk.Align.CENTER,
+      margin_top: 10,
+      margin_bottom: 10,
+    });
+    statusStack.add_named(loadingSpinner, "loading");
+    statusStack.add_named(dataVBox, "data");
+    statusStack.set_visible_child_name("loading");
+
+    const statusRow = new Adw.PreferencesRow();
+    statusRow.set_child(statusStack);
+    group.add(statusRow);
+
+    // ── Location: Adw.EntryRow ────────────────────────────────────────────
+    const locationEntry = new Adw.EntryRow({
+      title: "Location",
+      text: settings.get_string("weather-location") ?? "",
+      show_apply_button: false,
+    });
+
+    const spinner = new Gtk.Spinner({
+      valign: Gtk.Align.CENTER,
+      width_request: 16,
+      height_request: 16,
+    });
+    locationEntry.add_suffix(spinner);
+
+    const clearBtn = new Gtk.Button({
+      icon_name: "edit-clear-symbolic",
+      valign: Gtk.Align.CENTER,
+      has_frame: false,
+      tooltip_text: "Clear — use IP auto-detection",
+      css_classes: ["flat"],
+    });
+    clearBtn.connect("clicked", () => {
+      locationEntry.set_text("");
+      settings.set_string("weather-location", "");
+    });
+    locationEntry.add_suffix(clearBtn);
+    group.add(locationEntry);
+
+    // ── Autocomplete results ──────────────────────────────────────────────
+    const resultsBox = new Gtk.ListBox({
+      selection_mode: Gtk.SelectionMode.NONE,
+      visible: false,
+      css_classes: ["boxed-list"],
+      margin_top: 8,
+      margin_bottom: 16,
+    });
+    group.add(resultsBox);
+
+    const clearResults = () => {
+      let child = resultsBox.get_first_child();
+      while (child) {
+        const next = child.get_next_sibling();
+        resultsBox.remove(child);
+        child = next;
+      }
+      resultsBox.set_visible(false);
+    };
+
+    const appendResult = (res) => {
+      const parts = res.name.split(",");
+      const city = parts[0].trim();
+      const region = parts
+        .slice(1)
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .join(", ");
+
+      const row = new Adw.ActionRow({
+        title: city,
+        subtitle: region || res.name,
+        activatable: true,
+      });
+      row.add_prefix(
+        new Gtk.Image({ icon_name: "find-location-symbolic", pixel_size: 16 }),
+      );
+      row.add_suffix(
+        new Gtk.Image({
+          icon_name: "go-next-symbolic",
+          css_classes: ["dim-label"],
+        }),
+      );
+
+      row.connect("activated", () => {
+        const saved = res.city?.length > 0 ? res.city : city;
+        ignoreNextLocChange = true;
+        locationEntry.set_text(saved);
+        settings.set_string("weather-location", saved);
+        clearResults();
+        this._weatherClient?.refreshNow();
+      });
+
+      resultsBox.append(row);
+    };
+
+    // ── Debounced search ──────────────────────────────────────────────────
+    let searchTimeoutId = 0;
+    let ignoreNextLocChange = false;
+
+    locationEntry.connect("changed", () => {
+      if (ignoreNextLocChange) {
+        ignoreNextLocChange = false;
+        return;
+      }
+      const text = locationEntry.get_text().trim();
+      if (searchTimeoutId) {
+        GLib.Source.remove(searchTimeoutId);
+        searchTimeoutId = 0;
+      }
+      clearResults();
+      if (text.length < 2) {
+        spinner.stop();
+        return;
+      }
+
+      spinner.start();
+      searchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+        searchTimeoutId = 0;
+        if (!this._weatherClient) {
+          spinner.stop();
+          return GLib.SOURCE_REMOVE;
+        }
+
+        this._weatherClient
+          .search(text)
+          .then((results) => {
+            spinner.stop();
+            clearResults();
+            if (!results?.length) {
+              const noRow = new Adw.ActionRow({
+                title: "No locations found",
+                subtitle: "Try a different search term",
+              });
+              noRow.add_prefix(
+                new Gtk.Image({
+                  icon_name: "dialog-information-symbolic",
+                  pixel_size: 16,
+                }),
+              );
+              resultsBox.append(noRow);
+              resultsBox.set_visible(true);
+              return;
+            }
+            for (const res of results) appendResult(res);
+            resultsBox.set_visible(true);
+          })
+          .catch(() => spinner.stop());
+
+        return GLib.SOURCE_REMOVE;
+      });
+    });
+
+    locationEntry.connect("apply", () => {
+      const text = locationEntry.get_text().trim();
+      if (searchTimeoutId) {
+        GLib.Source.remove(searchTimeoutId);
+        searchTimeoutId = 0;
+      }
+      spinner.stop();
+      settings.set_string("weather-location", text);
+      clearResults();
+      this._weatherClient?.refreshNow();
+    });
+
+    // ── Units ─────────────────────────────────────────────────────────────
+    group.add(
+      this._comboRow(settings, "weather-units", {
+        title: "Units",
+        icon: "applications-science-symbolic",
+        choices: [
+          { label: "Metric (°C)", value: "metric" },
+          { label: "Imperial (°F)", value: "imperial" },
+        ],
+      }),
+    );
+
+    // ── Start client and connect signals ──────────────────────────────────
+    this._weatherClient.start((data) => {
+      const loc = settings.get_string("weather-location") || "your location";
+      statusIcon.set_label(data.icon ?? "");
+      statusTemp.set_label(data.temp ?? "—");
+      statusLoc.set_label(`Conditions in ${loc}`);
+      statusStack.set_visible_child_name("data");
+    });
+
+    const locSigId = settings.connect("changed::weather-location", () => {
+      const saved = settings.get_string("weather-location");
+      if (locationEntry.get_text() !== saved) {
+        ignoreNextLocChange = true;
+        locationEntry.set_text(saved);
+      }
+      // Flip back to loading spinner while new data fetches
+      statusStack.set_visible_child_name("loading");
+      this._weatherClient?.refresh();
+    });
+    const unitSigId = settings.connect("changed::weather-units", () => {
+      statusStack.set_visible_child_name("loading");
+      this._weatherClient?.refresh();
+    });
+
+    page.connect("destroy", () => {
+      if (searchTimeoutId) {
+        GLib.Source.remove(searchTimeoutId);
+        searchTimeoutId = 0;
+      }
+      settings.disconnect(locSigId);
+      settings.disconnect(unitSigId);
+    });
+
+    return group;
+  }
+
   // ── Page 3: Scrobbling ────────────────────────────────────────────────────
 
   _buildScrobblingPage(settings) {
@@ -554,15 +604,15 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       description: "Scrobble tracks to your Last.fm profile",
     });
     page.add(lfmGroup);
-
     lfmGroup.add(
       this._switchRow(settings, "lastfm-enabled", {
         title: "Enable Last.fm Scrobbling",
+        icon: "audio-headphones-symbolic",
       }),
     );
 
+    // Note: lastfm-username key has been removed from the schema.
     for (const [key, title] of [
-      ["lastfm-username", "Username"],
       ["lastfm-api-key", "API Key"],
       ["lastfm-api-secret", "API Secret"],
       ["lastfm-session-key", "Session Key"],
@@ -577,6 +627,7 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         title: "How to get a session key",
         subtitle:
           "Use auth.getMobileSession via the Last.fm API with your API key + secret",
+        icon_name: "dialog-information-symbolic",
       }),
     );
 
@@ -585,13 +636,12 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       description: "Scrobble tracks to your ListenBrainz profile",
     });
     page.add(lbGroup);
-
     lbGroup.add(
       this._switchRow(settings, "listenbrainz-enabled", {
         title: "Enable ListenBrainz Scrobbling",
+        icon: "network-server-symbolic",
       }),
     );
-
     const lbToken = new Adw.EntryRow({ title: "User Token" });
     settings.bind(
       "listenbrainz-token",
@@ -600,18 +650,18 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       Gio.SettingsBindFlags.DEFAULT,
     );
     lbGroup.add(lbToken);
-
     lbGroup.add(
       new Adw.ActionRow({
         title: "Get your token",
         subtitle: "Visit listenbrainz.org → Profile → API Keys",
+        icon_name: "dialog-information-symbolic",
       }),
     );
 
     return page;
   }
 
-  // ── Page 5: System ────────────────────────────────────────────────────────
+  // ── Page 4: System ────────────────────────────────────────────────────────
 
   _buildSystemPage(settings) {
     const page = new Adw.PreferencesPage({
@@ -625,7 +675,10 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     });
     page.add(diagGroup);
 
-    const wxStatusRow = new Adw.ActionRow({ title: "Weather Module" });
+    const wxStatusRow = new Adw.ActionRow({
+      title: "Weather Module",
+      icon_name: "weather-few-clouds-symbolic",
+    });
     settings.bind(
       "status-weather",
       wxStatusRow,
@@ -634,7 +687,10 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     );
     diagGroup.add(wxStatusRow);
 
-    const scrobStatusRow = new Adw.ActionRow({ title: "Scrobbling" });
+    const scrobStatusRow = new Adw.ActionRow({
+      title: "Scrobbling",
+      icon_name: "audio-headphones-symbolic",
+    });
     settings.bind(
       "status-scrobbler",
       scrobStatusRow,
@@ -652,6 +708,7 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     const resetRow = new Adw.ActionRow({
       title: "Reset Everything",
       subtitle: "Restore all settings to factory defaults",
+      icon_name: "edit-clear-all-symbolic",
     });
     const resetBtn = new Gtk.Button({
       label: "Reset",
@@ -668,9 +725,7 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     page.add(aboutGroup);
 
     const meta = this.metadata;
-    // Avoid optional-chain (?.) inside new constructors — compute strings first.
-    const metaVersion =
-      meta.version !== undefined ? String(meta.version) : "1.0";
+    const metaVersion = meta.version !== undefined ? String(meta.version) : "1";
     const shellVer = Array.isArray(meta["shell-version"])
       ? meta["shell-version"].join(", ")
       : "46+";
@@ -683,17 +738,18 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       new Gtk.Image({ icon_name: "audio-x-generic-symbolic", pixel_size: 48 }),
     );
     aboutGroup.add(titleRow);
-
     aboutGroup.add(
       new Adw.ActionRow({
         title: "Author",
         subtitle: "omarxkhalid",
+        icon_name: "user-symbolic",
       }),
     );
     aboutGroup.add(
       new Adw.ActionRow({
         title: "License",
         subtitle: "GPL-2.0-or-later",
+        icon_name: "text-x-generic-symbolic",
       }),
     );
 
@@ -717,12 +773,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  /**
-   * Build a SpinRow.
-   * All opts are extracted into local variables before constructing any GObject
-   * so that neither ?. nor ?? appear directly inside a `new` call — GJS does
-   * not allow optional-chain expressions as constructor arguments.
-   */
   _spinRow(settings, key, opts) {
     const o = opts || {};
     const title = o.title !== undefined ? o.title : key;
@@ -740,7 +790,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       step_increment: step,
       page_increment: page,
     });
-
     const rowProps = { title, subtitle, digits, adjustment: adj };
     if (icon) rowProps.icon_name = icon;
 
@@ -767,13 +816,15 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     const o = opts || {};
     const title = o.title !== undefined ? o.title : key;
     const choices = o.choices !== undefined ? o.choices : [];
+    const icon = o.icon !== undefined ? o.icon : null;
 
     const model = new Gtk.StringList();
     const values = choices.map((c) => c.value);
     for (const { label } of choices) model.append(label);
 
-    const row = new Adw.ComboRow({ title, model });
-
+    const rowProps = { title, model };
+    if (icon) rowProps.icon_name = icon;
+    const row = new Adw.ComboRow(rowProps);
     const cur = settings.get_string(key);
     const idx = values.indexOf(cur);
     if (idx >= 0) row.set_selected(idx);
@@ -784,7 +835,6 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
         settings.set_string(key, values[sel]);
     });
 
-    // Track the signal ID so it is freed when the row is destroy()ed
     const sigId = settings.connect("changed::" + key, () => {
       const newIdx = values.indexOf(settings.get_string(key));
       if (newIdx >= 0 && newIdx !== row.get_selected())

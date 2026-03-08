@@ -17,11 +17,11 @@
 import GLib from "gi://GLib";
 import Soup from "gi://Soup";
 
-const LASTFM_URL       = "https://ws.audioscrobbler.com/2.0/";
-const LB_URL           = "https://api.listenbrainz.org/1/submit-listens";
-const MIN_DURATION_S   = 30;  // tracks shorter than this are never scrobbled
+const LASTFM_URL = "https://ws.audioscrobbler.com/2.0/";
+const LB_URL = "https://api.listenbrainz.org/1/submit-listens";
+const MIN_DURATION_S = 30; // tracks shorter than this are never scrobbled
 const MAX_SCROBBLE_AT_S = 240; // scrobble at most 4 minutes into a track
-const POLL_INTERVAL_S  = 10;  // how often to check whether threshold is reached
+const POLL_INTERVAL_S = 10; // how often to check whether threshold is reached
 
 export class Scrobbler {
   constructor(settings) {
@@ -30,11 +30,11 @@ export class Scrobbler {
     // during the constructor call (which runs during enable() setup).
     this._session = null;
 
-    this._track       = null;  // { title, artist, album, durationSecs, startedAt }
-    this._playedSecs  = 0;
+    this._track = null; // { title, artist, album, durationSecs, startedAt }
+    this._playedSecs = 0;
     this._playStartMono = null;
-    this._scrobbled   = false;
-    this._pollSrc     = null;
+    this._scrobbled = false;
+    this._pollSrc = null;
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ export class Scrobbler {
     try {
       this._session?.abort();
     } catch (_e) {}
-    this._session  = null;
+    this._session = null;
     this._settings = null;
   }
 
@@ -101,8 +101,7 @@ export class Scrobbler {
   }
 
   _getSession() {
-    if (!this._session)
-      this._session = new Soup.Session({ timeout: 15 });
+    if (!this._session) this._session = new Soup.Session({ timeout: 15 });
     return this._session;
   }
 
@@ -137,10 +136,10 @@ export class Scrobbler {
       GLib.Source.remove(this._pollSrc);
       this._pollSrc = null;
     }
-    this._track         = null;
-    this._playedSecs    = 0;
+    this._track = null;
+    this._playedSecs = 0;
     this._playStartMono = null;
-    this._scrobbled     = false;
+    this._scrobbled = false;
   }
 
   // ── Dispatch to enabled services ──────────────────────────────────────────
@@ -167,15 +166,18 @@ export class Scrobbler {
   _lastfmNowPlaying({ title, artist, album, durationSecs }) {
     const params = {
       method: "track.updateNowPlaying",
-      track:  title,
+      track: title,
       artist,
-      sk:     this._settings.get_string("lastfm-session-key"),
+      sk: this._settings.get_string("lastfm-session-key"),
     };
     if (album) params.album = album;
     if (durationSecs > 0) params.duration = String(Math.floor(durationSecs));
     this._lastfmPost(params, (err) => {
       if (err) {
-        console.warn("DynamicIsland/Scrobbler: Last.fm now-playing failed:", err.message);
+        console.warn(
+          "DynamicIsland/Scrobbler: Last.fm now-playing failed:",
+          err.message,
+        );
         this._setStatus("Last.fm now-playing failed: " + err.message);
       } else {
         this._setStatus(`Last.fm playing: "${title}"`);
@@ -185,21 +187,24 @@ export class Scrobbler {
 
   _lastfmScrobble({ title, artist, album, durationSecs, startedAt }) {
     const params = {
-      method:         "track.scrobble",
-      "track[0]":     title,
-      "artist[0]":    artist,
+      method: "track.scrobble",
+      "track[0]": title,
+      "artist[0]": artist,
       "timestamp[0]": String(startedAt),
-      sk:             this._settings.get_string("lastfm-session-key"),
+      sk: this._settings.get_string("lastfm-session-key"),
     };
     if (album) params["album[0]"] = album;
     if (durationSecs > 0)
       params["duration[0]"] = String(Math.floor(durationSecs));
     this._lastfmPost(params, (err) => {
       if (err) {
-        console.warn("DynamicIsland/Scrobbler: Last.fm scrobble failed:", err.message);
+        console.warn(
+          "DynamicIsland/Scrobbler: Last.fm scrobble failed:",
+          err.message,
+        );
         this._setStatus("Last.fm scrobble failed: " + err.message);
       } else {
-        console.log(`DynamicIsland/Scrobbler: Last.fm scrobbled "${title}"`);
+        console.debug(`DynamicIsland/Scrobbler: Last.fm scrobbled "${title}"`);
         this._setStatus(`Last.fm scrobbled: "${title}"`);
       }
     });
@@ -218,7 +223,7 @@ export class Scrobbler {
 
   _lastfmPost(params, callback) {
     params.api_key = this._settings.get_string("lastfm-api-key");
-    params.format  = "json";
+    params.format = "json";
     params.api_sig = this._lastfmSign(params);
 
     const body = Object.entries(params)
@@ -273,20 +278,26 @@ export class Scrobbler {
   _lbScrobble({ title, artist, album, durationSecs, startedAt }) {
     const meta = {
       artist_name: artist,
-      track_name:  title,
+      track_name: title,
       additional_info: { listening_from: "dynamic-island-gnome" },
     };
     if (album) meta.release_name = album;
     if (durationSecs > 0)
       meta.additional_info.duration = Math.floor(durationSecs);
-    this._lbPost("single", { listened_at: startedAt, track_metadata: meta }, (err) => {
-      if (err) {
-        this._setStatus("ListenBrainz scrobble failed: " + err.message);
-      } else {
-        console.log(`DynamicIsland/Scrobbler: ListenBrainz scrobbled "${title}"`);
-        this._setStatus(`ListenBrainz scrobbled: "${title}"`);
-      }
-    });
+    this._lbPost(
+      "single",
+      { listened_at: startedAt, track_metadata: meta },
+      (err) => {
+        if (err) {
+          this._setStatus("ListenBrainz scrobble failed: " + err.message);
+        } else {
+          console.debug(
+            `DynamicIsland/Scrobbler: ListenBrainz scrobbled "${title}"`,
+          );
+          this._setStatus(`ListenBrainz scrobbled: "${title}"`);
+        }
+      },
+    );
   }
 
   _lbPost(listenType, payload, callback) {
@@ -322,7 +333,10 @@ export class Scrobbler {
           if (callback) callback(null);
         } catch (e) {
           if (!e.message?.includes("cancel")) {
-            console.warn("DynamicIsland/Scrobbler: ListenBrainz failed:", e.message);
+            console.warn(
+              "DynamicIsland/Scrobbler: ListenBrainz failed:",
+              e.message,
+            );
             if (callback) callback(e);
           }
         }

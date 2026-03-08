@@ -151,7 +151,9 @@ export class SeekTracker {
    * Does NOT reset _anchorPosSecs so the bar stays at the last known position.
    */
   start(proxy, lengthMicros, skipFetch = false) {
-    console.log(`DynamicIsland: SeekTracker.start(skipFetch=${skipFetch}, len=${lengthMicros})`);
+    console.debug(
+      `DynamicIsland: SeekTracker.start(skipFetch=${skipFetch}, len=${lengthMicros})`,
+    );
     this._proxy = proxy;
 
     const rawLen = Number(lengthMicros);
@@ -164,14 +166,16 @@ export class SeekTracker {
     if (!skipFetch) {
       this._fetchPosition(this._fetchGen);
     } else {
-      console.log("DynamicIsland: SeekTracker.start skipping initial D-Bus fetch (reset-inhibit)");
+      console.debug(
+        "DynamicIsland: SeekTracker.start skipping initial D-Bus fetch (reset-inhibit)",
+      );
       this._updateUI(this._anchorPosSecs);
     }
   }
 
   /** New track: hard-reset position to 0, then start fresh. */
   reset(proxy, lengthMicros) {
-    console.log(`DynamicIsland: SeekTracker.reset(len=${lengthMicros})`);
+    console.debug(`DynamicIsland: SeekTracker.reset(len=${lengthMicros})`);
     this.stop(); // Stop any ticks from advancing the ghost position first
 
     this._fetchGen++;
@@ -180,7 +184,7 @@ export class SeekTracker {
 
     this._anchorPosSecs = 0;
     this._anchorMonoUs = this._lastResetMonoUs;
-    
+
     // Use skipFetch=true so we don't fetch the player's position immediately.
     // D-Bus proxies can be "lazy" and report the old track's position for
     // several milliseconds after a track-change.
@@ -204,7 +208,7 @@ export class SeekTracker {
     // confirmation arrives.
     if (this._anchorMonoUs) {
       const p = this._estimatePos();
-      console.log(`DynamicIsland: SeekTracker.stop() snapshotting pos=${p}`);
+      console.debug(`DynamicIsland: SeekTracker.stop() snapshotting pos=${p}`);
       this._anchorPosSecs = p;
       this._anchorMonoUs = GLib.get_monotonic_time();
     }
@@ -224,9 +228,12 @@ export class SeekTracker {
 
     // If we just reset (track change), ignore external Seeked signals for a bit.
     // Some players fire Seeked(final_pos_of_old_track) right as they switch.
-    const inhibitMs = (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
+    const inhibitMs =
+      (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
     if (inhibitMs < 2500) {
-      console.log(`DynamicIsland: SeekTracker inhibiting stale seekedTo(${posSecs})`);
+      console.debug(
+        `DynamicIsland: SeekTracker inhibiting stale seekedTo(${posSecs})`,
+      );
       return;
     }
 
@@ -234,7 +241,7 @@ export class SeekTracker {
     this._fetchGen++;
     this._cancelSeekFetch();
 
-    console.log(`DynamicIsland: SeekTracker.seekedTo(${posSecs})`);
+    console.debug(`DynamicIsland: SeekTracker.seekedTo(${posSecs})`);
     this._anchorPosSecs = posSecs;
     this._anchorMonoUs = GLib.get_monotonic_time();
     this._updateUI(posSecs);
@@ -259,7 +266,8 @@ export class SeekTracker {
     // If we just reset (track change), do not poll the player via D-Bus for
     // 2500 ms. Many players (Spotify, GDM) are "lazy" and report the last
     // frame of the OLD track for a split second after metadata changes.
-    const elapsedMs = (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
+    const elapsedMs =
+      (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
     if (elapsedMs < 2500) {
       this.renderNow();
       return;
@@ -334,7 +342,8 @@ export class SeekTracker {
     if (!owner) return;
 
     // Do not initiate a fetch during the inhibit period
-    const inhibitMs = (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
+    const inhibitMs =
+      (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
     if (inhibitMs < 2500) return;
 
     Gio.DBus.session.call(
@@ -360,10 +369,13 @@ export class SeekTracker {
           if (!isFinite(posSecs) || posSecs < 0) return;
 
           // Final safety check: ignore if result arrived during NEW inhibit
-          const nowInhibitMs = (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
+          const nowInhibitMs =
+            (GLib.get_monotonic_time() - this._lastResetMonoUs) / 1000;
           if (nowInhibitMs < 2500) return;
 
-          console.log(`DynamicIsland: SeekTracker fetched position pos=${posSecs}`);
+          console.debug(
+            `DynamicIsland: SeekTracker fetched position pos=${posSecs}`,
+          );
           this._anchorPosSecs = posSecs;
           this._anchorMonoUs = GLib.get_monotonic_time();
           this._updateUI(posSecs);
@@ -381,8 +393,6 @@ export class SeekTracker {
 
     const dur = this._lengthSecs;
     const pos = dur > 0 ? Math.min(posSecs, dur) : posSecs;
-
-    // console.log(`DynamicIsland: SeekTracker._updateUI(pos=${posSecs}, dur=${dur})`);
 
     if (this._posLabel) this._posLabel.set_text(formatSecs(pos));
     if (this._durLabel)

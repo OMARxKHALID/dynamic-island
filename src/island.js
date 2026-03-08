@@ -60,8 +60,7 @@ export class IslandCore {
     this._lastWeatherData = null;
     this._lastBtDevices = [];
 
-    // Pill-view separator (null until first _buildPillView)
-    this._pillSep = null;
+    // Pill-view layout refs (set once in _buildPillView)
 
     // OSD
     this._osdState = null;
@@ -107,7 +106,8 @@ export class IslandCore {
 
   init() {
     this._scale = this._settings.get_double("notch-scale") || 1.0;
-    this._fontSizeMultiplier = this._settings.get_double("font-size-multiplier") || 1.0;
+    this._fontSizeMultiplier =
+      this._settings.get_double("font-size-multiplier") || 1.0;
     this._animDur = this._settings.get_int("animation-duration") || 280;
 
     this._seekTracker = new SeekTracker(this._settings);
@@ -138,7 +138,8 @@ export class IslandCore {
     });
 
     watch("font-size-multiplier", () => {
-      this._fontSizeMultiplier = this._settings.get_double("font-size-multiplier") || 1.0;
+      this._fontSizeMultiplier =
+        this._settings.get_double("font-size-multiplier") || 1.0;
       this._refreshUI();
     });
 
@@ -149,11 +150,10 @@ export class IslandCore {
       this._updateNotchStyle(this._actor.height, this._state),
     );
     watch("time-format", () => this._updateClock());
-    watch("show-weather", () => this._updatePillSep());
-    watch("show-bluetooth", () => this._updatePillSep());
-    watch("background-opacity", () =>
-      this._updateNotchStyle(this._actor.height, this._state),
-    );
+    watch("show-bluetooth", () => {
+      // updateBluetooth() calls _updatePillSep() internally
+      this.updateBluetooth(this._lastBtDevices ?? []);
+    });
 
     watch("dynamic-art-color", () => {
       if (!this._settings.get_boolean("dynamic-art-color"))
@@ -237,11 +237,11 @@ export class IslandCore {
         this._weatherWidget.visible =
           this._settings.get_boolean("show-weather") &&
           !!this._lastWeatherData?.temp;
+      // Must run after visibility is updated above
+      this._updatePillSep();
     });
 
-    watch("show-bluetooth", () => {
-      this.updateBluetooth(this._lastBtDevices ?? []);
-    });
+    // show-bluetooth watcher above calls updateBluetooth() → _updatePillSep()
   }
 
   // ── Widget construction ───────────────────────────────────────────────────
@@ -382,18 +382,20 @@ export class IslandCore {
     this._weatherWidget.add_child(this._weatherIconLabel);
     this._weatherWidget.add_child(this._weatherTempLabel);
 
-    this._pillPrefixSpacer = new St.Widget({ x_expand: true, x_align: Clutter.ActorAlign.FILL, visible: false });
-    this._pillSuffixSpacer = new St.Widget({ x_expand: true, x_align: Clutter.ActorAlign.FILL, visible: false });
-    this._pillMidSpacer = new St.Widget({ x_expand: true, x_align: Clutter.ActorAlign.FILL, visible: true });
-
-    // Subtle 1 px vertical separator between the info group and the clock.
-    // Visible only when at least one info widget (BT / weather) is shown.
-    this._pillSep = new St.Widget({
-      style_class: "di-pill-sep",
-      width: 1,
-      height: Math.floor(14 * scale),
-      y_align: Clutter.ActorAlign.CENTER,
+    this._pillPrefixSpacer = new St.Widget({
+      x_expand: true,
+      x_align: Clutter.ActorAlign.FILL,
       visible: false,
+    });
+    this._pillSuffixSpacer = new St.Widget({
+      x_expand: true,
+      x_align: Clutter.ActorAlign.FILL,
+      visible: false,
+    });
+    this._pillMidSpacer = new St.Widget({
+      x_expand: true,
+      x_align: Clutter.ActorAlign.FILL,
+      visible: true,
     });
 
     this._clockLabel = new St.Label({
@@ -408,7 +410,6 @@ export class IslandCore {
     box.add_child(this._btIndicator);
     box.add_child(this._weatherWidget);
     box.add_child(this._pillMidSpacer);
-    box.add_child(this._pillSep);
     box.add_child(this._clockLabel);
     box.add_child(this._pillSuffixSpacer);
     return box;
@@ -908,7 +909,9 @@ export class IslandCore {
     );
   }
   _getArtCompactSize() {
-    return Math.floor((this._settings.get_int("art-compact-size") || ART_COMPACT) * this._scale);
+    return Math.floor(
+      (this._settings.get_int("art-compact-size") || ART_COMPACT) * this._scale,
+    );
   }
 
   _getFont(basePx) {
@@ -1153,11 +1156,17 @@ export class IslandCore {
   }
 
   _onHoverEnter() {
-    if (this._mediaProxy && this._playing) this._transitionTo(State.EXPANDED);
+    // Expand whenever a player is tracked — whether playing or paused.
+    // This lets the user hover a paused compact island to reveal controls
+    // and press play without needing to click first.
+    if (this._mediaProxy && this._state === State.COMPACT)
+      this._transitionTo(State.EXPANDED);
   }
 
   _onHoverLeave() {
-    if (this._mediaProxy && this._playing) this._transitionTo(State.COMPACT);
+    // Always collapse back to compact so the waveform/cover view is restored.
+    if (this._mediaProxy && this._state === State.EXPANDED)
+      this._transitionTo(State.COMPACT);
   }
 
   // ── Smart auto-hide ───────────────────────────────────────────────────────
@@ -1285,38 +1294,33 @@ export class IslandCore {
     const showMediaView = this._playing || (persist && title.length > 0);
 
     if (showMediaView) {
+      // Cancel any pending collapse timer
       if (this._collapseTimeoutId) {
         GLib.Source.remove(this._collapseTimeoutId);
         this._collapseTimeoutId = null;
       }
       this._showActor(180);
-      if (this._state === State.PILL || this._state === State.OSD)
+      if (this._state === State.PILL || this._state === State.OSD) {
         this._transitionTo(State.COMPACT);
+      } else if (!this._playing && this._state === State.EXPANDED) {
+        // Paused while expanded — drop back to compact so the waveform/cover
+        // is visible. But if the user's cursor is still over the island, keep
+        // it expanded so they can see the controls and press play again.
+        if (!this._actor?.hover) this._transitionTo(State.COMPACT);
+      }
     } else {
-      const persist = this._settings.get_boolean("persist-compact-media");
       if (this._state === State.COMPACT || this._state === State.EXPANDED) {
         if (!this._collapseTimeoutId) {
-          // If persist is ON, we NEVER collapse from COMPACT to PILL as long as 
-          // a player is active (proxied).
-          if (persist && this._state === State.COMPACT) return;
-
           this._collapseTimeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
-            persist ? 2000 : 800, // wait a bit longer if persisting
+            800,
             () => {
               this._collapseTimeoutId = null;
               if (
                 this._state === State.COMPACT ||
                 this._state === State.EXPANDED
-              ) {
-                // Only collapse if we are NOT persisting, OR if we are in EXPANDED 
-                // and should drop to COMPACT.
-                if (persist) {
-                  this._transitionTo(State.COMPACT);
-                } else {
-                  this._transitionTo(State.PILL);
-                }
-              }
+              )
+                this._transitionTo(State.PILL);
               return GLib.SOURCE_REMOVE;
             },
           );
@@ -1384,17 +1388,19 @@ export class IslandCore {
     this._updatePillSep();
   }
 
-  /** Toggle the pill separator based on whether any left-side widget is visible. */
+  /** Update spacer visibility so the clock centres when no side widgets are shown. */
   _updatePillSep() {
-    if (!this._pillSep) return;
     const btVis = this._btIndicator?.visible ?? false;
     const wxVis = this._weatherWidget?.visible ?? false;
     const hasSideInfo = btVis || wxVis;
 
-    this._pillSep.visible = hasSideInfo;
-
-    // Centering logic: if no info on the left, use flanking spacers to center the clock
-    if (this._pillPrefixSpacer && this._pillSuffixSpacer && this._pillMidSpacer) {
+    // When nothing is on the left, flanking spacers (both x_expand) centre the clock.
+    // When info is present, the mid-spacer pushes the clock to the right.
+    if (
+      this._pillPrefixSpacer &&
+      this._pillSuffixSpacer &&
+      this._pillMidSpacer
+    ) {
       this._pillPrefixSpacer.visible = !hasSideInfo;
       this._pillSuffixSpacer.visible = !hasSideInfo;
       this._pillMidSpacer.visible = hasSideInfo;
