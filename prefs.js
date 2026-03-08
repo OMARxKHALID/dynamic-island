@@ -16,9 +16,14 @@ import Gtk from "gi://Gtk";
 import Gio from "gi://Gio";
 import { ExtensionPreferences } from "resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js";
 
+import { WeatherClient } from "./src/weather.js";
+
 export default class DynamicIslandPrefs extends ExtensionPreferences {
   fillPreferencesWindow(window) {
     const settings = this.getSettings();
+    this._weatherClient = new WeatherClient(settings);
+    this._weatherClient.start(() => {}); // start session for searching
+    
     window.set_default_size(720, 700);
     window.set_title("Dynamic Island");
 
@@ -161,6 +166,12 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       icon: "audio-volume-high-symbolic",
     }));
 
+    generalGroup.add(this._switchRow(settings, "persist-compact-media", {
+      title: "Keep Media View While Paused",
+      subtitle: "Show the media waveform and cover instead of the clock when paused",
+      icon: "media-playback-pause-symbolic",
+    }));
+
     generalGroup.add(this._spinRow(settings, "osd-timeout", {
       title: "OSD Duration (ms)",
       subtitle: "How long volume and brightness popups stay visible",
@@ -181,6 +192,22 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
       subtitle: "How fast the island expands and collapses",
       icon: "preferences-desktop-animation-symbolic",
       lower: 50, upper: 1000, step: 10, page: 100,
+    }));
+
+    const clockGroup = new Adw.PreferencesGroup({
+      title: "Clock & Time",
+      description: "Customise the idle pill clock display",
+    });
+    page.add(clockGroup);
+
+    clockGroup.add(this._comboRow(settings, "time-format", {
+      title: "Clock Format",
+      choices: [
+        { label: "Time Only (14:30)", value: "%H:%M" },
+        { label: "Day & Time (Tue 14:30)", value: "%a %H:%M" },
+        { label: "Date & Time (Mar 08, 14:30)", value: "%b %d, %H:%M" },
+        { label: "Full Date & Time (Mar 08, 2026 14:30)", value: "%b %d, %Y %H:%M" },
+      ],
     }));
 
     const weatherGroup = new Adw.PreferencesGroup({
@@ -206,6 +233,63 @@ export default class DynamicIslandPrefs extends ExtensionPreferences {
     }));
     settings.bind("weather-location", locationRow, "text", Gio.SettingsBindFlags.DEFAULT);
     weatherGroup.add(locationRow);
+
+    // Live search results list directly in the group
+    const listbox = new Gtk.ListBox({
+      selection_mode: Gtk.SelectionMode.NONE,
+      visible: false,
+    });
+    listbox.add_css_class("boxed-list");
+    listbox.margin_top = 6;
+    weatherGroup.add(listbox);
+
+    let searchTimeoutId = 0;
+    locationRow.connect("changed", () => {
+      const text = locationRow.get_text().trim();
+      if (searchTimeoutId) {
+        GLib.Source.remove(searchTimeoutId);
+        searchTimeoutId = 0;
+      }
+      if (text.length < 1) {
+        listbox.hide();
+        // Clear result rows
+        let child = listbox.get_first_child();
+        while (child) {
+          listbox.remove(child);
+          child = listbox.get_first_child();
+        }
+        return;
+      }
+      searchTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+        searchTimeoutId = 0;
+        this._weatherClient.search(text).then(results => {
+          // Clear old
+          let child = listbox.get_first_child();
+          while (child) {
+            listbox.remove(child);
+            child = listbox.get_first_child();
+          }
+          if (results.length === 0) {
+            listbox.hide();
+            return;
+          }
+          for (const res of results) {
+            const row = new Adw.ActionRow({
+              title: res.name,
+              subtitle: res.lat ? `Lat: ${res.lat}, Lon: ${res.lon}` : "",
+              activatable: true
+            });
+            row.connect("activated", () => {
+              settings.set_string("weather-location", res.city || res.name.split(",")[0].trim());
+              listbox.hide();
+            });
+            listbox.append(row);
+          }
+          listbox.show();
+        });
+        return GLib.SOURCE_REMOVE;
+      });
+    });
 
     weatherGroup.add(this._comboRow(settings, "weather-units", {
       title: "Units",

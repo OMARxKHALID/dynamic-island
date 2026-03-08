@@ -39,6 +39,14 @@
       <default>true</default>
       <summary>Show notification toasts in the island</summary>
     </key>
+    <key name="persist-compact-media" type="b">
+      <default>false</default>
+      <summary>Keep media view visible when paused</summary>
+      <description>
+        If true, the island will stay in the compact media state (showing the
+        waveform/cover) even when paused, rather than collapsing to the clock.
+      </description>
+    </key>
 
     <!-- ── Weather widget ───────────────────────────────────────────────── -->
     <key name="show-weather" type="b">
@@ -104,6 +112,11 @@
         The identity is the lowercase suffix after "org.mpris.MediaPlayer2." with
         trailing instance numbers stripped.
       </description>
+    </key>
+
+    <key name="time-format" type="s">
+      <default>'%H:%M'</default>
+      <summary>Clock time format (strftime style)</summary>
     </key>
 
     <!-- ── Timing ────────────────────────────────────────────────────────── -->

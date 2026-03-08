@@ -15,7 +15,7 @@ import Soup from "gi://Soup";
 
 const WTTR_BASE         = "https://wttr.in";
 const REFRESH_INTERVAL_S = 30 * 60; // fetch every 30 minutes
-const REQUEST_TIMEOUT_S  = 15;
+const REQUEST_TIMEOUT_S  = 30; // Increased to 30s for slower connections
 
 export class WeatherClient {
   constructor(settings) {
@@ -53,10 +53,46 @@ export class WeatherClient {
       GLib.Source.remove(this._debounceSrc);
       this._debounceSrc = null;
     }
-    this._debounceSrc = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+    this._debounceSrc = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
       this._debounceSrc = null;
       this._fetch();
       return GLib.SOURCE_REMOVE;
+    });
+  }
+
+  /**
+   * Search for locations based on a query.
+   * Returns a promise resolving to an array of { name, country, lat, lon }.
+   */
+  search(query) {
+    if (!query || query.length < 3) return Promise.resolve([]);
+    if (!this._session) return Promise.resolve([]);
+
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
+    const msg = Soup.Message.new("GET", url);
+    msg.get_request_headers().append("User-Agent", "DynamicIsland-GNOME-Prefs/1.0");
+
+    return new Promise((resolve) => {
+      this._session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (session, res) => {
+        try {
+          const bytes = session.send_and_read_finish(res);
+          if (!bytes) {
+            resolve([]);
+            return;
+          }
+          const raw = new TextDecoder().decode(bytes.get_data());
+          const json = JSON.parse(raw);
+          const mapped = json.map(item => ({
+            name: item.display_name,
+            lat: item.lat,
+            lon: item.lon,
+            city: item.address?.city || item.address?.town || item.address?.village || ""
+          }));
+          resolve(mapped);
+        } catch (e) {
+          resolve([]);
+        }
+      });
     });
   }
 
@@ -98,33 +134,46 @@ export class WeatherClient {
   }
 
   _autoDetectLocationThenFetch() {
-    let geoMsg;
-    try {
-      // Very fast, HTTPS IP geocoding with no auth/rate-limits
-      geoMsg = Soup.Message.new("GET", "https://get.geojs.io/v1/ip/geo.json");
-    } catch (e) {
-      this._fetchWeather(""); // fallback
-      return;
-    }
-
+    this._setStatus("Auto-detecting location...");
+    
+    // Primary auto-detection via ipapi.co (reliable HTTPS)
+    const msg = Soup.Message.new("GET", "https://ipapi.co/json/");
+    
     this._session.send_and_read_async(
-      geoMsg,
+      msg,
       GLib.PRIORITY_DEFAULT,
       null,
       (sess, res) => {
         try {
           const bytes = sess.send_and_read_finish(res);
-          if (!bytes) return this._fetchWeather("");
-          
-          const raw = new TextDecoder().decode(bytes.get_data() ?? new Uint8Array());
-          const json = JSON.parse(raw);
-          const city = json.city ? json.city.trim() : "";
-          
-          this._fetchWeather(city);
-        } catch (e) {
-          if (!e.message?.includes("cancel"))
-            console.warn("DynamicIsland/Weather: IP auto-detect failed:", e.message);
-          this._fetchWeather(""); // fallback
+          if (bytes) {
+            const json = JSON.parse(new TextDecoder().decode(bytes.get_data()));
+            if (json.city) {
+              this._fetchWeather(json.city);
+              return;
+            }
+          }
+        } catch (e) {}
+        
+        // Fallback: Second auto-detection via freeipapi.com
+        try {
+          const fMsg = Soup.Message.new("GET", "https://freeipapi.com/api/json");
+          this._session.send_and_read_async(fMsg, GLib.PRIORITY_DEFAULT, null, (s, r) => {
+            try {
+              const b = s.send_and_read_finish(r);
+              if (b) {
+                const j = JSON.parse(new TextDecoder().decode(b.get_data()));
+                if (j.cityName) {
+                  this._fetchWeather(j.cityName);
+                  return;
+                }
+              }
+            } catch (ex) {}
+            // Final fallback: Use wttr.in's own IP-based detection
+            this._fetchWeather("");
+          });
+        } catch (err) {
+          this._fetchWeather("");
         }
       },
     );

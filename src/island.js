@@ -141,6 +141,12 @@ export class IslandCore {
     watch("background-opacity", () =>
       this._updateNotchStyle(this._actor.height, this._state),
     );
+    watch("time-format", () => this._updateClock());
+    watch("show-weather", () => this._updatePillSep());
+    watch("show-bluetooth", () => this._updatePillSep());
+    watch("background-opacity", () =>
+      this._updateNotchStyle(this._actor.height, this._state),
+    );
 
     watch("dynamic-art-color", () => {
       if (!this._settings.get_boolean("dynamic-art-color"))
@@ -366,7 +372,9 @@ export class IslandCore {
     this._weatherWidget.add_child(this._weatherIconLabel);
     this._weatherWidget.add_child(this._weatherTempLabel);
 
-    const spacer = new St.Widget({ x_expand: true });
+    this._pillPrefixSpacer = new St.Widget({ x_expand: true, visible: false });
+    this._pillSuffixSpacer = new St.Widget({ x_expand: true, visible: false });
+    this._pillMidSpacer = new St.Widget({ x_expand: true, visible: true });
 
     // Subtle 1 px vertical separator between the info group and the clock.
     // Visible only when at least one info widget (BT / weather) is shown.
@@ -385,11 +393,13 @@ export class IslandCore {
     });
     this._clockLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
 
+    box.add_child(this._pillPrefixSpacer);
     box.add_child(this._btIndicator);
     box.add_child(this._weatherWidget);
-    box.add_child(spacer);
+    box.add_child(this._pillMidSpacer);
     box.add_child(this._pillSep);
     box.add_child(this._clockLabel);
+    box.add_child(this._pillSuffixSpacer);
     return box;
   }
 
@@ -653,15 +663,16 @@ export class IslandCore {
     this._osdSegBox = new St.BoxLayout({
       vertical: false,
       x_expand: true,
+      x_align: Clutter.ActorAlign.CENTER,
       y_align: Clutter.ActorAlign.CENTER,
-      style: `spacing: ${Math.floor(3 * scale)}px;`,
+      style: `spacing: ${Math.floor(2 * scale)}px;`,
     });
     this._osdSegs = [];
     for (let i = 0; i < OSD_SEG_COUNT; i++) {
       const seg = new St.Widget({
         style_class: "di-osd-seg",
-        width: Math.floor(7 * scale),
-        height: Math.floor(24 * scale),
+        width: Math.floor(6 * scale),
+        height: Math.floor(22 * scale),
       });
       this._osdSegs.push(seg);
       this._osdSegBox.add_child(seg);
@@ -1235,7 +1246,10 @@ export class IslandCore {
       this._resetAutoHideTimer();
     }
 
-    if (this._playing) {
+    const persist = this._settings.get_boolean("persist-compact-media");
+    const showMediaView = this._playing || (persist && title.length > 0);
+
+    if (showMediaView) {
       if (this._collapseTimeoutId) {
         GLib.Source.remove(this._collapseTimeoutId);
         this._collapseTimeoutId = null;
@@ -1244,18 +1258,29 @@ export class IslandCore {
       if (this._state === State.PILL || this._state === State.OSD)
         this._transitionTo(State.COMPACT);
     } else {
+      const persist = this._settings.get_boolean("persist-compact-media");
       if (this._state === State.COMPACT || this._state === State.EXPANDED) {
         if (!this._collapseTimeoutId) {
+          // If persist is ON, we NEVER collapse from COMPACT to PILL as long as 
+          // a player is active (proxied).
+          if (persist && this._state === State.COMPACT) return;
+
           this._collapseTimeoutId = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT,
-            800,
+            persist ? 2000 : 800, // wait a bit longer if persisting
             () => {
               this._collapseTimeoutId = null;
               if (
                 this._state === State.COMPACT ||
                 this._state === State.EXPANDED
               ) {
-                this._transitionTo(State.PILL);
+                // Only collapse if we are NOT persisting, OR if we are in EXPANDED 
+                // and should drop to COMPACT.
+                if (persist) {
+                  this._transitionTo(State.COMPACT);
+                } else {
+                  this._transitionTo(State.PILL);
+                }
               }
               return GLib.SOURCE_REMOVE;
             },
@@ -1329,7 +1354,16 @@ export class IslandCore {
     if (!this._pillSep) return;
     const btVis = this._btIndicator?.visible ?? false;
     const wxVis = this._weatherWidget?.visible ?? false;
-    this._pillSep.visible = btVis || wxVis;
+    const hasSideInfo = btVis || wxVis;
+
+    this._pillSep.visible = hasSideInfo;
+
+    // Centering logic: if no info on the left, use flanking spacers to center the clock
+    if (this._pillPrefixSpacer && this._pillSuffixSpacer && this._pillMidSpacer) {
+      this._pillPrefixSpacer.visible = !hasSideInfo;
+      this._pillSuffixSpacer.visible = !hasSideInfo;
+      this._pillMidSpacer.visible = hasSideInfo;
+    }
   }
 
   // ── Bluetooth ─────────────────────────────────────────────────────────────
@@ -1607,7 +1641,8 @@ export class IslandCore {
 
   _updateClock() {
     const now = GLib.DateTime.new_now_local();
-    const text = now?.format("%H:%M");
+    const fmt = this._settings?.get_string("time-format") || "%H:%M";
+    const text = now?.format(fmt);
     if (text && this._clockLabel) this._clockLabel.set_text(text);
   }
 
